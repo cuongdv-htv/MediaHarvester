@@ -1,0 +1,29 @@
+# Cấu hình MediaHarvester — copy thành config.toml rồi chỉnh theo máy của bạn.
+
+[general]
+# Thư mục gốc chứa thư viện media tải về
+library_root = "D:/MediaLibrary"
+# Chất lượng video mặc định khi tải: "720p" | "1080p" | "1440p" | "2160p"
+default_quality = "1080p"
+
+[download]
+# Số download chạy song song tối đa (toàn cục)
+max_concurrent = 4
+# Số download song song tối đa trên cùng một domain
+max_per_domain = 2
+
+[rate_limits]
+# Giới hạn request/giờ theo provider (hiển thị quota còn lại trên GUI)
+pexels = 200
+pixabay = 100
+unsplash = 50
+
+[dedup]
+# Khoảng cách hamming pHash tối đa để coi là ảnh trùng
+phash_threshold = 5
+# true: tự bỏ qua ảnh gần trùng; false: hỏi user trên GUI
+auto_skip_duplicates = false
+
+[anti_block]
+# Tôn trọng robots.txt (chỉ áp dụng cho ddgs / generic_scraper)
+honor_robots_txt = true
