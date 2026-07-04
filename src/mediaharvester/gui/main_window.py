@@ -82,8 +82,9 @@ class MainWindow(QMainWindow):
 
     def _build_providers(self) -> dict[str, Provider]:
         """Khởi tạo mọi provider khả dụng từ registry (thiếu key thì bỏ qua)."""
-        from mediaharvester.providers import pexels, pixabay, ytdlp_provider  # noqa: F401
+        from mediaharvester import providers as providers_pkg
 
+        providers_pkg.load_all()
         key_map = {
             "pexels": self.api_keys.pexels_api_key,
             "pixabay": self.api_keys.pixabay_api_key,

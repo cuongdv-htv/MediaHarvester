@@ -114,6 +114,7 @@ async def download_file(
     dest: Path,
     progress_cb: Callable[[int, int], None] | None = None,
     cancel_event: asyncio.Event | None = None,
+    headers: dict[str, str] | None = None,
 ) -> Path:
     """Một lần thử tải: stream vào `{dest}.part`, resume bằng Range, xong rename.
 
@@ -123,7 +124,9 @@ async def download_file(
     part = dest.with_name(dest.name + ".part")
 
     offset = part.stat().st_size if part.exists() else 0
-    headers = {"Range": f"bytes={offset}-"} if offset > 0 else {}
+    headers = dict(headers or {})
+    if offset > 0:
+        headers["Range"] = f"bytes={offset}-"
 
     async with client.stream("GET", url, headers=headers, follow_redirects=True) as resp:
         if resp.status_code == 200 and offset > 0:
@@ -158,6 +161,7 @@ async def download_with_retry(
     cancel_event: asyncio.Event | None = None,
     max_attempts: int = 3,
     wait_multiplier: float = 1.0,
+    headers: dict[str, str] | None = None,
 ) -> Path:
     """Tải file với retry (tenacity): tối đa `max_attempts` lần, backoff mũ, honor 429."""
     async for attempt in AsyncRetrying(
@@ -171,7 +175,7 @@ async def download_with_retry(
                 logger.info(
                     "Thử lại lần {}/{}: {}", attempt.retry_state.attempt_number, max_attempts, url
                 )
-            return await download_file(client, url, dest, progress_cb, cancel_event)
+            return await download_file(client, url, dest, progress_cb, cancel_event, headers)
     raise RuntimeError("unreachable")  # pragma: no cover
 
 

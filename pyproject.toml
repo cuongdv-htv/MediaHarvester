@@ -16,6 +16,9 @@ dependencies = [
     "yt-dlp[default]>=2026.6.9",
     "pyside6>=6.11.1",
     "qasync>=0.28.0",
+    "gallery-dl>=1.32.5",
+    "curl-cffi>=0.15.0",
+    "ddgs>=9.14.4",
 ]
 
 [project.scripts]
@@ -48,3 +51,6 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: test gọi API thật qua mạng (chạy riêng: pytest -m integration)",
+]

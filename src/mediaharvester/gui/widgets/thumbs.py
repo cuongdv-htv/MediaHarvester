@@ -64,7 +64,8 @@ class ThumbnailLoader(QObject):
                     resp = await self._client.get(url, follow_redirects=True)
                     resp.raise_for_status()
                 path.write_bytes(resp.content)
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, RuntimeError, OSError) as exc:
+                # RuntimeError: client đã đóng khi app thoát giữa chừng
                 logger.debug("Không tải được thumbnail {}: {}", url, exc)
                 return
         self.thumb_ready.emit(row, str(path))

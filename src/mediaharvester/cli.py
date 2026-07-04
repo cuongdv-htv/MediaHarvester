@@ -71,9 +71,9 @@ def _build_providers(
     names: list[str], keys: ApiKeys, client: httpx.AsyncClient, config: AppConfig
 ) -> dict[str, Provider]:
     """Khởi tạo các provider được chọn; thiếu key/không tồn tại → cảnh báo, bỏ qua."""
-    # Import để trigger @register_provider
-    from mediaharvester.providers import pexels, pixabay, ytdlp_provider  # noqa: F401
+    from mediaharvester import providers as providers_pkg
 
+    providers_pkg.load_all()
     registry = get_registry()
     key_map = {
         "pexels": keys.pexels_api_key,
