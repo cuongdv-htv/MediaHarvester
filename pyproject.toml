@@ -13,6 +13,7 @@ dependencies = [
     "sqlmodel>=0.0.39",
     "pillow>=12.3.0",
     "imagehash>=4.3.2",
+    "yt-dlp[default]>=2026.6.9",
 ]
 
 [project.scripts]

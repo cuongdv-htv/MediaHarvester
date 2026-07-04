@@ -1,5 +1,6 @@
-# Secrets
+# Secrets & cấu hình local
 .env
+config.toml
 
 # Python
 __pycache__/

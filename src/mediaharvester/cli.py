@@ -11,12 +11,13 @@ import argparse
 import asyncio
 import sys
 from itertools import zip_longest
+from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
 
 from mediaharvester import __version__
-from mediaharvester.core.config import ApiKeys, load_config
+from mediaharvester.core.config import ApiKeys, AppConfig, load_config
 from mediaharvester.core.database import get_engine, init_db
 from mediaharvester.core.downloader import DownloadManager, JobState, JobStatus
 from mediaharvester.providers.base import MediaType, Provider, SearchResult, get_registry
@@ -55,15 +56,23 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=20, help="Số kết quả tối đa (mặc định: 20)")
     sp.add_argument("--download", action="store_true", help="Tải các kết quả về máy")
     sp.add_argument("--project", default="default", help="Tên project (mặc định: default)")
+
+    dp = sub.add_parser("download", help="Tải video từ URL bất kỳ qua yt-dlp (YouTube/TikTok/X...)")
+    dp.add_argument("url", help="URL video cần tải")
+    dp.add_argument(
+        "--clip", default=None,
+        help="Cắt đoạn hh:mm:ss-hh:mm:ss, ví dụ 00:01:00-00:01:30",
+    )
+    dp.add_argument("--project", default="default", help="Tên project (mặc định: default)")
     return parser
 
 
 def _build_providers(
-    names: list[str], keys: ApiKeys, client: httpx.AsyncClient
+    names: list[str], keys: ApiKeys, client: httpx.AsyncClient, config: AppConfig
 ) -> dict[str, Provider]:
     """Khởi tạo các provider được chọn; thiếu key/không tồn tại → cảnh báo, bỏ qua."""
     # Import để trigger @register_provider
-    from mediaharvester.providers import pexels, pixabay  # noqa: F401
+    from mediaharvester.providers import pexels, pixabay, ytdlp_provider  # noqa: F401
 
     registry = get_registry()
     key_map = {
@@ -81,7 +90,10 @@ def _build_providers(
         if cls.requires_api_key and not api_key:
             print(f"⚠ Thiếu API key cho '{name}' trong .env — bỏ qua.")
             continue
-        providers[name] = cls(api_key=api_key, client=client)
+        if name == "ytdlp":
+            providers[name] = cls(cookies_from_browser=config.ytdlp.cookies_from_browser)
+        else:
+            providers[name] = cls(api_key=api_key, client=client)
     return providers
 
 
@@ -135,7 +147,7 @@ async def _cmd_search(args: argparse.Namespace) -> int:
 
     timeout = httpx.Timeout(30.0, read=120.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        providers = _build_providers(names, keys, client)
+        providers = _build_providers(names, keys, client, config)
         if not providers:
             print("Không có provider nào khả dụng — kiểm tra .env và tham số --providers.")
             return 1
@@ -199,15 +211,60 @@ async def _cmd_search(args: argparse.Namespace) -> int:
         return 0
 
 
+async def _cmd_download(args: argparse.Namespace) -> int:
+    """Tải video từ URL bất kỳ qua yt-dlp (kèm cắt đoạn nếu có --clip)."""
+    from mediaharvester.providers.ytdlp_provider import YtDlpProvider
+
+    config = load_config()
+    provider = YtDlpProvider(cookies_from_browser=config.ytdlp.cookies_from_browser)
+
+    print(f"Đang lấy metadata: {args.url} ...")
+    try:
+        result = await provider.resolve_url(args.url, clip=args.clip)
+    except ValueError as exc:  # định dạng --clip sai
+        print(f"✘ {exc}")
+        return 1
+    except Exception as exc:
+        logger.error("Không lấy được metadata {}: {}", args.url, exc)
+        print(f"✘ Không lấy được metadata — kiểm tra URL: {exc}")
+        return 1
+
+    dur = f" — {result.duration_sec:.0f}s" if result.duration_sec else ""
+    clip_note = f" (cắt đoạn {args.clip})" if args.clip else ""
+    print(f"Video: {result.title}{dur}{clip_note}")
+
+    keyword = urlparse(args.url).netloc.removeprefix("www.") or "direct-url"
+    engine = get_engine(config.library_root / "mediaharvester.db")
+    init_db(engine)
+    manager = DownloadManager(
+        config, engine, {"ytdlp": provider}, args.project,
+        progress_cb=_make_progress_printer(),
+    )
+    manager.add(result, keyword=keyword)
+    await manager.run()
+
+    state = manager.states[0]
+    if state.status == JobStatus.DONE:
+        print(f"\n✔ Hoàn tất: {state.file_path}")
+        info_json = state.file_path.with_suffix(".info.json") if state.file_path else None
+        if info_json and info_json.exists():
+            print(f"  Metadata: {info_json.name}")
+        return 0
+    print(f"\n✘ Kết thúc với trạng thái: {state.status} — {state.error or ''}")
+    return 0 if state.status == JobStatus.SKIPPED_DUPLICATE else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """Chạy CLI. Trả về exit code."""
     _force_utf8_console()
     setup_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "search":
+    commands = {"search": _cmd_search, "download": _cmd_download}
+    handler = commands.get(args.command or "")
+    if handler is not None:
         try:
-            return asyncio.run(_cmd_search(args))
+            return asyncio.run(handler(args))
         except KeyboardInterrupt:
             print("\nĐã dừng theo yêu cầu người dùng.")
             return 130

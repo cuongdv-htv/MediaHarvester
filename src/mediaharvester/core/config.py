@@ -47,6 +47,12 @@ class AntiBlockConfig(BaseModel):
     honor_robots_txt: bool = True
 
 
+class YtDlpConfig(BaseModel):
+    """Cấu hình yt-dlp: cookies từ browser cho các trang cần đăng nhập (X/Instagram)."""
+
+    cookies_from_browser: str | None = None  # "chrome" | "edge" | "firefox" | None
+
+
 def _default_rate_limits() -> dict[str, int]:
     return {"pexels": 200, "pixabay": 100, "unsplash": 50}
 
@@ -59,6 +65,7 @@ class AppConfig(BaseModel):
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     anti_block: AntiBlockConfig = Field(default_factory=AntiBlockConfig)
+    ytdlp: YtDlpConfig = Field(default_factory=YtDlpConfig)
     rate_limits: dict[str, int] = Field(default_factory=_default_rate_limits)
 
 
@@ -80,5 +87,6 @@ def load_config(path: Path | None = None) -> AppConfig:
         download=DownloadConfig(**data.get("download", {})),
         dedup=DedupConfig(**data.get("dedup", {})),
         anti_block=AntiBlockConfig(**data.get("anti_block", {})),
+        ytdlp=YtDlpConfig(**data.get("ytdlp", {})),
         rate_limits=data.get("rate_limits") or _default_rate_limits(),
     )

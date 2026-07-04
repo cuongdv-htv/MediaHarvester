@@ -27,3 +27,8 @@ auto_skip_duplicates = false
 [anti_block]
 # Tôn trọng robots.txt (chỉ áp dụng cho ddgs / generic_scraper)
 honor_robots_txt = true
+
+[ytdlp]
+# Lấy cookies từ browser cho các trang cần đăng nhập (X/Instagram).
+# Giá trị: "chrome" | "edge" | "firefox". Bỏ trống/comment nếu không cần.
+# cookies_from_browser = "chrome"

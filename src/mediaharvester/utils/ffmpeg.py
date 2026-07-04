@@ -9,6 +9,7 @@ from pathlib import Path
 from loguru import logger
 
 VENDOR_FFMPEG = Path("vendor") / "ffmpeg.exe"
+VENDOR_DENO = Path("vendor") / "deno.exe"
 
 
 def find_ffmpeg() -> Path | None:
@@ -16,6 +17,14 @@ def find_ffmpeg() -> Path | None:
     if VENDOR_FFMPEG.exists():
         return VENDOR_FFMPEG
     which = shutil.which("ffmpeg")
+    return Path(which) if which else None
+
+
+def find_deno() -> Path | None:
+    """Tìm deno (JS runtime cho yt-dlp/YouTube): vendor/deno.exe, fallback PATH."""
+    if VENDOR_DENO.exists():
+        return VENDOR_DENO
+    which = shutil.which("deno")
     return Path(which) if which else None
 
 
