@@ -90,3 +90,49 @@ def load_config(path: Path | None = None) -> AppConfig:
         ytdlp=YtDlpConfig(**data.get("ytdlp", {})),
         rate_limits=data.get("rate_limits") or _default_rate_limits(),
     )
+
+
+def save_config(config: AppConfig, path: Path | None = None) -> Path:
+    """Ghi cấu hình ra config.toml (tomllib chỉ đọc nên sinh TOML thủ công)."""
+    path = path or Path("config.toml")
+    lines = [
+        "# Cấu hình MediaHarvester — file này do app sinh ra (tab Settings).",
+        "",
+        "[general]",
+        f'library_root = "{config.library_root.as_posix()}"',
+        f'default_quality = "{config.default_quality}"',
+        "",
+        "[download]",
+        f"max_concurrent = {config.download.max_concurrent}",
+        f"max_per_domain = {config.download.max_per_domain}",
+        "",
+        "[rate_limits]",
+        *[f"{name} = {limit}" for name, limit in config.rate_limits.items()],
+        "",
+        "[dedup]",
+        f"phash_threshold = {config.dedup.phash_threshold}",
+        f"auto_skip_duplicates = {str(config.dedup.auto_skip_duplicates).lower()}",
+        "",
+        "[anti_block]",
+        f"honor_robots_txt = {str(config.anti_block.honor_robots_txt).lower()}",
+        "",
+        "[ytdlp]",
+    ]
+    if config.ytdlp.cookies_from_browser:
+        lines.append(f'cookies_from_browser = "{config.ytdlp.cookies_from_browser}"')
+    else:
+        lines.append('# cookies_from_browser = "chrome"')
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def save_api_keys(keys: ApiKeys, path: Path | None = None) -> Path:
+    """Ghi API keys ra .env (không bao giờ lưu key ở nơi khác)."""
+    path = path or Path(".env")
+    path.write_text(
+        f"PEXELS_API_KEY={keys.pexels_api_key}\n"
+        f"PIXABAY_API_KEY={keys.pixabay_api_key}\n"
+        f"UNSPLASH_ACCESS_KEY={keys.unsplash_access_key}\n",
+        encoding="utf-8",
+    )
+    return path

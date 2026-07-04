@@ -69,6 +69,7 @@ class JobState:
     index: int
     result: SearchResult
     keyword: str
+    project: str = "default"
     db_job_id: int | None = None
     status: JobStatus = JobStatus.QUEUED
     bytes_done: int = 0
@@ -226,27 +227,42 @@ class DownloadManager:
 
         self._queue: asyncio.Queue[JobState] = asyncio.Queue()
         self._domain_sems: dict[str, asyncio.Semaphore] = {}
+        self._workers: list[asyncio.Task] = []
         self._pause = asyncio.Event()
         self._pause.set()  # set = đang chạy
         self.rate_limiters: dict[str, RateLimiter] = {
             name: RateLimiter(limit) for name, limit in config.rate_limits.items()
         }
         self.states: list[JobState] = []
-
-        with get_session(self.engine) as session:
-            self._project_id = get_or_create_project(session, project_name).id
+        self._project_ids: dict[str, int] = {}
+        self._project_id = self._ensure_project(project_name)
 
     # ---------- API điều khiển ----------
 
-    def add(self, result: SearchResult, keyword: str) -> JobState:
+    def _ensure_project(self, name: str) -> int:
+        """Lấy (hoặc tạo) project id theo tên, có cache."""
+        if name not in self._project_ids:
+            with get_session(self.engine) as session:
+                project_id = get_or_create_project(session, name).id
+            assert project_id is not None
+            self._project_ids[name] = project_id
+        return self._project_ids[name]
+
+    def add(self, result: SearchResult, keyword: str, project: str | None = None) -> JobState:
         """Thêm 1 kết quả tìm kiếm vào queue, tạo record DownloadJob (queued)."""
+        project = project or self.project_name
+        self._ensure_project(project)
         with get_session(self.engine) as session:
             db_job = DownloadJob(url=result.download_url, status=JobStatus.QUEUED)
             session.add(db_job)
             session.commit()
             session.refresh(db_job)
         state = JobState(
-            index=len(self.states) + 1, result=result, keyword=keyword, db_job_id=db_job.id
+            index=len(self.states) + 1,
+            result=result,
+            keyword=keyword,
+            project=project,
+            db_job_id=db_job.id,
         )
         self.states.append(state)
         self._queue.put_nowait(state)
@@ -270,14 +286,31 @@ class DownloadManager:
         """Quota còn lại theo provider (hiển thị lên GUI/CLI)."""
         return {name: rl.remaining for name, rl in self.rate_limiters.items()}
 
-    async def run(self) -> None:
-        """Chạy queue đến khi hết job. Worker số lượng = max_concurrent."""
+    def start(self) -> None:
+        """Khởi động worker pool sống lâu dài (chế độ GUI) — cần event loop đang chạy."""
+        if self._workers:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("DownloadManager.start() gọi khi chưa có event loop — bỏ qua.")
+            return
         n_workers = max(1, self.config.download.max_concurrent)
-        workers = [asyncio.create_task(self._worker()) for _ in range(n_workers)]
-        await self._queue.join()
-        for w in workers:
+        self._workers = [asyncio.create_task(self._worker()) for _ in range(n_workers)]
+        logger.info("DownloadManager: {} worker đã khởi động.", n_workers)
+
+    async def stop(self) -> None:
+        """Dừng worker pool (chế độ GUI, gọi khi thoát app)."""
+        for w in self._workers:
             w.cancel()
-        await asyncio.gather(*workers, return_exceptions=True)
+        await asyncio.gather(*self._workers, return_exceptions=True)
+        self._workers = []
+
+    async def run(self) -> None:
+        """Chạy queue đến khi hết job rồi dừng (chế độ CLI)."""
+        self.start()
+        await self._queue.join()
+        await self.stop()
 
     # ---------- Nội bộ ----------
 
@@ -318,6 +351,14 @@ class DownloadManager:
             try:
                 await self._process(state)
             except asyncio.CancelledError:
+                if state.cancel_event.is_set():
+                    # Job bị user hủy giữa chừng — worker vẫn sống, xử lý job kế
+                    # (finally bên dưới sẽ gọi task_done)
+                    state.status = JobStatus.CANCELLED
+                    self._update_db_job(state)
+                    self._notify(state)
+                    continue
+                # Worker bị shutdown (stop/run kết thúc)
                 if state.status in (JobStatus.QUEUED, JobStatus.DOWNLOADING):
                     state.status = JobStatus.CANCELLED
                     self._update_db_job(state)
@@ -348,13 +389,16 @@ class DownloadManager:
             await limiter.acquire()
 
         dest_dir = build_asset_dir(
-            self.config.library_root, self.project_name, result.media_type, state.keyword
+            self.config.library_root, state.project, result.media_type, state.keyword
         )
 
         state.status = JobStatus.DOWNLOADING
         self._notify(state)
 
         def on_bytes(done: int, total: int) -> None:
+            if state.cancel_event.is_set():
+                # Hủy giữa chừng: raise xuyên qua provider.download (cả httpx lẫn yt-dlp)
+                raise asyncio.CancelledError("Job bị hủy bởi người dùng")
             state.bytes_done = done
             state.bytes_total = total
             self._notify(state)
@@ -390,10 +434,11 @@ class DownloadManager:
         else:
             phash = await asyncio.to_thread(phash_video, file_path)
 
-        if phash is not None and self._project_id is not None:
+        project_id = self._ensure_project(state.project)
+        if phash is not None:
             with get_session(self.engine) as session:
                 near = find_phash_duplicate(
-                    session, self._project_id, phash, self.config.dedup.phash_threshold
+                    session, project_id, phash, self.config.dedup.phash_threshold
                 )
             if near is not None:
                 if self.config.dedup.auto_skip_duplicates:
@@ -417,7 +462,7 @@ class DownloadManager:
         await asyncio.to_thread(make_thumbnail, file_path, result.media_type, thumb_dir)
 
         asset = Asset(
-            project_id=self._project_id,
+            project_id=project_id,
             file_path=str(file_path),
             media_type=result.media_type,
             provider=result.provider,
@@ -447,7 +492,7 @@ class DownloadManager:
                 "phash": phash,
                 "filesize": asset.filesize,
                 "keyword": state.keyword,
-                "project": self.project_name,
+                "project": state.project,
                 "downloaded_at": datetime.now(UTC).isoformat(),
             },
         )
