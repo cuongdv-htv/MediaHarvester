@@ -13,6 +13,10 @@ __pycache__/
 logs/
 *.log
 
+# Thư viện media tải về + database (dữ liệu người dùng)
+library/
+*.db
+
 # Vendor binaries (tải bằng scripts/fetch_vendor.py)
 vendor/*.exe
 
