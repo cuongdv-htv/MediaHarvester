@@ -14,7 +14,10 @@ def setup_logging(log_dir: Path | None = None, level: str = "INFO") -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger.remove()
-    logger.add(sys.stderr, level=level)
+    # Bản đóng gói windowed (PyInstaller/Nuitka) không có console → sys.stderr là None.
+    console = sys.stderr or sys.stdout
+    if console is not None:
+        logger.add(console, level=level)
     logger.add(
         log_dir / "mediaharvester_{time:YYYY-MM-DD}.log",
         level="DEBUG",

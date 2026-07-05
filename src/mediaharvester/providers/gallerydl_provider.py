@@ -58,7 +58,12 @@ class GalleryDlProvider(Provider):
         return []
 
     def _base_cmd(self) -> list[str]:
-        cmd = [sys.executable, "-m", "gallery_dl"]
+        from mediaharvester.utils.ffmpeg import find_gallery_dl
+
+        # Bản đóng gói: `-m gallery_dl` không chạy được trong exe đóng băng
+        # → ưu tiên vendor/gallery-dl.exe (tải bằng scripts/fetch_vendor.py)
+        vendor_exe = find_gallery_dl()
+        cmd = [str(vendor_exe)] if vendor_exe else [sys.executable, "-m", "gallery_dl"]
         if _CONFIG_FILE.exists():
             cmd += ["--config", str(_CONFIG_FILE)]
         return cmd
@@ -102,10 +107,14 @@ class GalleryDlProvider(Provider):
         return new_files[0]
 
     async def health_check(self) -> bool:
-        """OK nếu `python -m gallery_dl --version` chạy được."""
+        """OK nếu gallery-dl --version chạy được (vendor exe hoặc module)."""
+        base = self._base_cmd()
+        if "--config" in base:  # --version không cần config
+            base = base[: base.index("--config")]
         try:
             proc = await asyncio.create_subprocess_exec(
-                *[sys.executable, "-m", "gallery_dl", "--version"],
+                *base,
+                "--version",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )

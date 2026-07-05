@@ -22,20 +22,8 @@ from mediaharvester.providers.base import (
     SearchResult,
     register_provider,
 )
+from mediaharvester.utils.anti_block import curl_fetch_file
 from mediaharvester.utils.ua_pool import polite_delay, random_ua
-
-
-def _curl_cffi_fetch(url: str, dest: Path, ua: str) -> Path:
-    """Fallback chống 403: tải bằng curl_cffi impersonate Chrome (blocking)."""
-    from curl_cffi import requests as curl_requests
-
-    resp = curl_requests.get(
-        url, impersonate="chrome", timeout=60, headers={"User-Agent": ua}
-    )
-    resp.raise_for_status()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(resp.content)
-    return dest
 
 
 @register_provider
@@ -107,7 +95,7 @@ class DdgsImagesProvider(Provider):
             if exc.response.status_code not in (403, 429):
                 raise
             logger.info("DDGS bị {} — fallback curl_cffi: {}", exc.response.status_code, url)
-            path = await asyncio.to_thread(_curl_cffi_fetch, url, dest, ua)
+            path = await asyncio.to_thread(curl_fetch_file, url, dest, ua)
             progress_cb(path.stat().st_size, path.stat().st_size)
             return path
 

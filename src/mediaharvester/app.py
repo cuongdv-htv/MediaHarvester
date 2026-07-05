@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
 import sys
+import traceback
+from pathlib import Path
 
 from mediaharvester.utils.logging_setup import setup_logging
 
 
-def main() -> int:
-    """Khởi động GUI MediaHarvester."""
+def _run() -> int:
+    """Khởi động GUI MediaHarvester (phần chính, được _guard bọc bắt lỗi)."""
     setup_logging()
 
     import qasync
@@ -35,6 +38,27 @@ def main() -> int:
         loop.run_forever()
         loop.run_until_complete(_shutdown())
     return 0
+
+
+def main() -> int:
+    """Entry point: bắt mọi lỗi khởi động ghi ra logs/startup_error.log.
+
+    Bản đóng gói (windowed) không có console — nếu app crash lúc khởi động,
+    traceback phải được ghi ra file để còn chẩn đoán được.
+    """
+    # PyInstaller + multiprocessing: tránh child process re-exec toàn bộ app.
+    multiprocessing.freeze_support()
+    try:
+        return _run()
+    except Exception:
+        tb = traceback.format_exc()
+        try:
+            Path("logs").mkdir(exist_ok=True)
+            (Path("logs") / "startup_error.log").write_text(tb, encoding="utf-8")
+        except OSError:
+            pass
+        print(tb, file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

@@ -8,24 +8,32 @@ from pathlib import Path
 
 from loguru import logger
 
-VENDOR_FFMPEG = Path("vendor") / "ffmpeg.exe"
-VENDOR_DENO = Path("vendor") / "deno.exe"
+from mediaharvester.utils.paths import vendor_dir
+
+
+def _find_vendor_tool(exe_name: str, path_name: str) -> Path | None:
+    """Tìm tool: ưu tiên vendor/{exe_name} (kể cả khi đóng gói), fallback PATH."""
+    vendor_exe = vendor_dir() / exe_name
+    if vendor_exe.exists():
+        return vendor_exe
+    which = shutil.which(path_name)
+    return Path(which) if which else None
 
 
 def find_ffmpeg() -> Path | None:
     """Tìm ffmpeg: ưu tiên vendor/ffmpeg.exe, fallback ffmpeg trong PATH."""
-    if VENDOR_FFMPEG.exists():
-        return VENDOR_FFMPEG
-    which = shutil.which("ffmpeg")
-    return Path(which) if which else None
+    return _find_vendor_tool("ffmpeg.exe", "ffmpeg")
 
 
 def find_deno() -> Path | None:
     """Tìm deno (JS runtime cho yt-dlp/YouTube): vendor/deno.exe, fallback PATH."""
-    if VENDOR_DENO.exists():
-        return VENDOR_DENO
-    which = shutil.which("deno")
-    return Path(which) if which else None
+    return _find_vendor_tool("deno.exe", "deno")
+
+
+def find_gallery_dl() -> Path | None:
+    """Tìm gallery-dl.exe trong vendor/ (cần cho bản đóng gói); None nếu chưa có."""
+    vendor_exe = vendor_dir() / "gallery-dl.exe"
+    return vendor_exe if vendor_exe.exists() else None
 
 
 def extract_frame(video_path: Path, output_png: Path, at_sec: float = 1.0) -> bool:

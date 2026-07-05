@@ -101,6 +101,11 @@ class MainWindow(QMainWindow):
                     providers[name] = cls(
                         cookies_from_browser=self.config.ytdlp.cookies_from_browser
                     )
+                elif name == "scraper":
+                    providers[name] = cls(
+                        client=self.client,
+                        honor_robots=self.config.anti_block.honor_robots_txt,
+                    )
                 else:
                     providers[name] = cls(api_key=api_key, client=self.client)
             except Exception as exc:

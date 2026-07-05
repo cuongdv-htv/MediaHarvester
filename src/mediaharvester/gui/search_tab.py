@@ -61,14 +61,20 @@ class SearchTab(QWidget):
 
         url_row = QHBoxLayout()
         self.url_edit = QLineEdit()
-        self.url_edit.setPlaceholderText("Hoặc dán URL video (YouTube/TikTok/X...)")
+        self.url_edit.setPlaceholderText(
+            "Hoặc dán URL: video (YouTube/TikTok/X...) hoặc trang web bất kỳ"
+        )
         self.clip_edit = QLineEdit()
         self.clip_edit.setPlaceholderText("Cắt đoạn hh:mm:ss-hh:mm:ss (tùy chọn)")
         self.clip_edit.setFixedWidth(220)
         self.url_btn = QPushButton("Tải URL này")
+        self.scrape_btn = QPushButton("🔎 Quét trang")
+        self.script_btn = QPushButton("📝 Kịch bản → từ khóa")
         url_row.addWidget(self.url_edit)
         url_row.addWidget(self.clip_edit)
         url_row.addWidget(self.url_btn)
+        url_row.addWidget(self.scrape_btn)
+        url_row.addWidget(self.script_btn)
         left.addLayout(url_row)
         top.addLayout(left, stretch=3)
 
@@ -130,6 +136,8 @@ class SearchTab(QWidget):
         # ---------- Nối signal ----------
         self.search_btn.clicked.connect(self.on_search)
         self.url_btn.clicked.connect(self.on_download_url)
+        self.scrape_btn.clicked.connect(self.on_scrape_page)
+        self.script_btn.clicked.connect(self.on_script_to_keywords)
         self.check_all_btn.clicked.connect(lambda: self.grid.set_all_checked(True))
         self.uncheck_all_btn.clicked.connect(lambda: self.grid.set_all_checked(False))
         self.add_queue_btn.clicked.connect(self.on_add_to_queue)
@@ -258,3 +266,86 @@ class SearchTab(QWidget):
         self.window.jobs_changed()
         self.window.toast(f"Đã thêm '{result.title[:50]}' vào hàng đợi.")
         self.url_edit.clear()
+
+    @asyncSlot()
+    async def on_scrape_page(self) -> None:
+        """Quét URL trang bất kỳ → liệt kê ảnh/video vào grid để tick chọn."""
+        url = self.url_edit.text().strip()
+        if not url:
+            self.window.toast("Dán URL trang web vào ô trước đã.")
+            return
+        scraper = self.window.providers.get("scraper")
+        if scraper is None:
+            self.window.toast("Provider scraper chưa khả dụng.")
+            return
+        self.scrape_btn.setEnabled(False)
+        self.scrape_btn.setText("Đang quét...")
+        try:
+            results = await scraper.scrape(url)
+        except ValueError as exc:  # robots.txt không cho phép
+            self.window.toast(str(exc).splitlines()[0])
+            return
+        except Exception as exc:
+            logger.error("Quét trang {} lỗi: {}", url, exc)
+            self.window.toast(f"Không quét được trang: {exc}")
+            return
+        finally:
+            self.scrape_btn.setEnabled(True)
+            self.scrape_btn.setText("🔎 Quét trang")
+
+        from urllib.parse import urlparse as _urlparse
+
+        keyword = _urlparse(url).netloc.removeprefix("www.") or "scraped"
+        self.grid.clear()
+        self._results = []
+        thumb_jobs: list[tuple[int, str]] = []
+        for result in results:
+            row = self.grid.count()
+            label = f"[{result.media_type}] {result.title[:40]}"
+            self.grid.add_card(label, (result, keyword))
+            self._results.append((result, keyword))
+            if result.thumbnail_url:
+                thumb_jobs.append((row, result.thumbnail_url))
+        self.count_label.setText(
+            f"Quét được {len(results)} media từ {keyword} — tick chọn rồi thêm vào hàng đợi."
+        )
+        self.window.thumb_loader.fetch_many(thumb_jobs)
+
+    def on_script_to_keywords(self) -> None:
+        """Mở dialog paste kịch bản → tách từ khóa → đổ vào ô query."""
+        from PySide6.QtWidgets import (
+            QDialog,
+            QDialogButtonBox,
+            QLabel,
+            QPlainTextEdit,
+            QVBoxLayout,
+        )
+
+        from mediaharvester.utils.keywords import HeuristicKeywordExtractor
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Kịch bản → từ khóa")
+        dialog.resize(640, 420)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Dán kịch bản video (tiếng Việt hoặc tiếng Anh):"))
+        editor = QPlainTextEdit()
+        layout.addWidget(editor)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Tách từ khóa")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        text = editor.toPlainText().strip()
+        if not text:
+            return
+        keywords = HeuristicKeywordExtractor().extract(text, max_keywords=12)
+        if not keywords:
+            self.window.toast("Không tách được từ khóa nào từ văn bản này.")
+            return
+        self.query_edit.setPlainText("\n".join(keywords))
+        self.window.toast(f"Đã tách {len(keywords)} từ khóa — bấm Tìm kiếm để chạy.")

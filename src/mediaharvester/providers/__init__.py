@@ -11,6 +11,7 @@ def load_all() -> None:
     from mediaharvester.providers import (  # noqa: F401
         ddgs_images,
         gallerydl_provider,
+        generic_scraper,
         nasa,
         openverse,
         pexels,

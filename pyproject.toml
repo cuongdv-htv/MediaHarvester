@@ -19,7 +19,12 @@ dependencies = [
     "gallery-dl>=1.32.5",
     "curl-cffi>=0.15.0",
     "ddgs>=9.14.4",
+    "selectolax>=0.4.10",
 ]
+
+[project.optional-dependencies]
+# Trang JS nặng: uv sync --extra scraper && uv run playwright install chromium
+scraper = ["playwright>=1.45"]
 
 [project.scripts]
 mediaharvester-cli = "mediaharvester.cli:main"
@@ -27,6 +32,7 @@ mediaharvester = "mediaharvester.app:main"
 
 [dependency-groups]
 dev = [
+    "pyinstaller>=6.21.0",
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
     "respx>=0.21",

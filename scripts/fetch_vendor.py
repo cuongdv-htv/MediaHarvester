@@ -28,6 +28,9 @@ YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.ex
 DENO_URL = (
     "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
 )
+# Các release mới của gallery-dl không đính kèm exe — pin bản cuối có binary.
+# (App đóng gói dùng exe này; môi trường dev dùng package pip mới hơn.)
+GALLERYDL_URL = "https://github.com/mikf/gallery-dl/releases/download/v1.31.10/gallery-dl.exe"
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
 
 
@@ -94,6 +97,15 @@ def fetch_deno(force: bool) -> None:
         print(f"  Đã giải nén: {target}")
 
 
+def fetch_gallerydl(force: bool) -> None:
+    """Tải gallery-dl.exe — bản đóng gói cần exe vì `-m gallery_dl` không chạy trong app frozen."""
+    target = VENDOR_DIR / "gallery-dl.exe"
+    if not force and target.exists():
+        print("gallery-dl.exe đã có trong vendor/ — bỏ qua (dùng --force để tải lại).")
+        return
+    download(GALLERYDL_URL, target, "gallery-dl.exe")
+
+
 def main() -> int:
     """Tải toàn bộ vendor binaries."""
     parser = argparse.ArgumentParser(description="Tải ffmpeg + yt-dlp + deno vào vendor/")
@@ -105,6 +117,7 @@ def main() -> int:
         fetch_ffmpeg(args.force)
         fetch_ytdlp(args.force)
         fetch_deno(args.force)
+        fetch_gallerydl(args.force)
     except httpx.HTTPError as exc:
         print(f"✘ Lỗi mạng khi tải vendor: {exc}")
         return 1

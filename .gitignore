@@ -24,7 +24,11 @@ vendor/*.exe
 # Build / packaging
 build/
 dist/
+build-nuitka/
 *.spec.bak
+
+# Icon sinh tự động (chạy scripts/make_icon.py)
+assets/
 
 # IDE / OS
 .idea/
