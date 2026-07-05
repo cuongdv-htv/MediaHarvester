@@ -52,14 +52,27 @@ uv run nuitka `
 Kết quả trong `build-nuitka/app.dist/` — đổi tên thư mục thành `MediaHarvester`
 rồi copy vào `dist/` trước khi đóng installer.
 
+> ⚠️ **Lưu ý Nuitka + yt-dlp**: yt-dlp gộp hàng nghìn extractor thành một file C
+> khổng lồ (`yt_dlp.extractor.lazy_extractors`). Compiler **MinGW** (Nuitka tự tải)
+> thường **hết bộ nhớ (`cc1.exe: out of memory`)** khi compile file này, và còn
+> vấp lỗi header `structuredquerycondition.h`. **Bắt buộc dùng MSVC** để build Nuitka:
+>
+> 1. Cài Visual Studio Build Tools (workload "Desktop development with C++"):
+>    `winget install Microsoft.VisualStudio.2022.BuildTools`
+> 2. Thêm `--msvc=latest` vào lệnh Nuitka ở trên (bỏ MinGW).
+> 3. Nếu vẫn thiếu bộ nhớ, thêm `--low-memory --jobs=2`.
+>
+> Bản release chính thức v0.1.0 build bằng **PyInstaller** (ổn định, không cần MSVC).
+
 ## Đóng installer — Inno Setup
 
-1. Cài [Inno Setup 6](https://jrsoftware.org/isinfo.php).
+1. Cài [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+   (`winget install JRSoftware.InnoSetup`).
 2. Build xong `dist/MediaHarvester/` (PyInstaller hoặc Nuitka).
-3. Compile:
+3. Compile (đường dẫn ISCC.exe tùy nơi cài — winget đặt ở `%LOCALAPPDATA%\Programs`):
 
 ```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\installer.iss
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
 Kết quả: `dist/MediaHarvester-Setup-0.1.0.exe`.
