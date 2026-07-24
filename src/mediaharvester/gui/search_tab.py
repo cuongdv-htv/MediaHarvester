@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -124,6 +125,13 @@ class SearchTab(QWidget):
         options.addWidget(QLabel("Hướng khung hình:"))
         options.addWidget(self.orientation_combo)
 
+        self.limit_spin = QSpinBox()
+        self.limit_spin.setRange(1, 200)
+        self.limit_spin.setValue(30)
+        self.limit_spin.setSingleStep(10)
+        options.addWidget(QLabel("Số kết quả mỗi nguồn:"))
+        options.addWidget(self.limit_spin)
+
         options.addWidget(QLabel("Project:"))
         self.project_edit = QLineEdit("default")
         options.addWidget(self.project_edit)
@@ -193,6 +201,7 @@ class SearchTab(QWidget):
             self.window.toast("Chọn ít nhất một nguồn.")
             return
 
+        per_page = self.limit_spin.value()
         self.search_btn.setEnabled(False)
         self.search_btn.setText("Đang tìm...")
         self.grid.clear()
@@ -209,7 +218,7 @@ class SearchTab(QWidget):
                             keyword,
                             name,
                             asyncio.ensure_future(
-                                provider.search(keyword, media_type, per_page=30)
+                                provider.search(keyword, media_type, per_page=per_page)
                             ),
                         ))
             thumb_jobs: list[tuple[int, str]] = []
