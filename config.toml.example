@@ -28,6 +28,14 @@ auto_skip_duplicates = false
 # Tôn trọng robots.txt (chỉ áp dụng cho ddgs / generic_scraper)
 honor_robots_txt = true
 
+[key_rotation]
+# Xoay vòng nhiều API key (điền nhiều key trong .env, cách nhau dấu phẩy).
+# cooldown_sec = 0 → key chạm giới hạn nghỉ tới hết ngày; >0 → nghỉ đúng số giây.
+cooldown_sec = 0
+# Lưu trạng thái "key đang nghỉ" ra <library>/.keystate.json (chỉ id ẩn danh)
+# để giữ qua các lần khởi động trong ngày.
+persist = true
+
 [ytdlp]
 # Lấy cookies từ browser cho các trang cần đăng nhập (X/Instagram).
 # Giá trị: "chrome" | "edge" | "firefox". Bỏ trống/comment nếu không cần.

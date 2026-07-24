@@ -17,10 +17,10 @@ from mediaharvester.core.downloader import download_with_retry
 from mediaharvester.core.organizer import build_filename, ext_from_url
 from mediaharvester.providers.base import (
     MediaType,
-    Provider,
     SearchResult,
     register_provider,
 )
+from mediaharvester.providers.keyed import KeyedProvider
 
 _BASE = "https://pixabay.com/api/"
 _LICENSE = "Pixabay Content License"
@@ -43,23 +43,19 @@ def _pick_video_variant(videos: dict, quality: str) -> dict | None:
 
 
 @register_provider
-class PixabayProvider(Provider):
+class PixabayProvider(KeyedProvider):
     """Nguồn stock Pixabay — ảnh và video miễn phí, Pixabay Content License."""
 
     name = "pixabay"
     supported_types = {MediaType.IMAGE, MediaType.VIDEO}
     requires_api_key = True
 
-    def __init__(self, api_key: str = "", client: httpx.AsyncClient | None = None) -> None:
-        self.api_key = api_key
-        self._client = client or httpx.AsyncClient(timeout=30)
-
     async def search(
         self, query: str, media_type: MediaType, page: int = 1, per_page: int = 30
     ) -> list[SearchResult]:
         """Tìm ảnh/video trên Pixabay, trả về danh sách SearchResult chuẩn hóa."""
         per_page = max(3, min(per_page, 200))  # Pixabay yêu cầu 3..200
-        params: dict = {"key": self.api_key, "q": query, "page": page, "per_page": per_page,
+        params: dict = {"q": query, "page": page, "per_page": per_page,
                         "safesearch": "true"}
         if media_type == MediaType.IMAGE:
             url = _BASE
@@ -67,7 +63,9 @@ class PixabayProvider(Provider):
         else:
             url = f"{_BASE}videos/"
 
-        resp = await self._client.get(url, params=params)
+        resp = await self._request(
+            lambda key: self._client.get(url, params={**params, "key": key})
+        )
         resp.raise_for_status()
         data = resp.json()
 
@@ -135,12 +133,14 @@ class PixabayProvider(Provider):
         return await download_with_retry(self._client, url, dest, progress_cb)
 
     async def health_check(self) -> bool:
-        """Kiểm tra API key bằng 1 request search tối thiểu."""
+        """Kiểm tra API key (có xoay vòng) bằng 1 request search tối thiểu."""
         try:
-            resp = await self._client.get(
-                _BASE, params={"key": self.api_key, "q": "test", "per_page": 3}
+            resp = await self._request(
+                lambda key: self._client.get(
+                    _BASE, params={"key": key, "q": "test", "per_page": 3}
+                )
             )
             return resp.status_code == 200
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, RuntimeError) as exc:
             logger.warning("Pixabay health-check lỗi: {}", exc)
             return False

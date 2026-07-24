@@ -17,6 +17,8 @@ logs/
 # Thư viện media tải về + database (dữ liệu người dùng)
 library/
 *.db
+# Trạng thái xoay vòng API key (chỉ id ẩn danh, vẫn không nên commit)
+.keystate.json
 
 # Vendor binaries (tải bằng scripts/fetch_vendor.py)
 vendor/*.exe

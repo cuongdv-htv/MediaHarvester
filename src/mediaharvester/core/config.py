@@ -14,7 +14,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ApiKeys(BaseSettings):
-    """API keys của các provider, đọc từ file .env."""
+    """API keys của các provider, đọc từ file .env.
+
+    Mỗi trường có thể chứa **nhiều key** cách nhau bởi dấu phẩy / xuống dòng để
+    dùng cùng cơ chế xoay vòng (khi 1 key chạm giới hạn free thì đổi key kế tiếp).
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -25,6 +29,23 @@ class ApiKeys(BaseSettings):
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
     unsplash_access_key: str = ""
+
+    def keys_for(self, provider: str) -> list[str]:
+        """Danh sách key của 1 provider (đã tách, bỏ trùng, giữ thứ tự)."""
+        from mediaharvester.core.keypool import split_keys
+
+        raw = {
+            "pexels": self.pexels_api_key,
+            "pixabay": self.pixabay_api_key,
+            "unsplash": self.unsplash_access_key,
+        }.get(provider, "")
+        seen: set[str] = set()
+        out: list[str] = []
+        for k in split_keys(raw):
+            if k not in seen:
+                seen.add(k)
+                out.append(k)
+        return out
 
 
 class DownloadConfig(BaseModel):
@@ -53,6 +74,19 @@ class YtDlpConfig(BaseModel):
     cookies_from_browser: str | None = None  # "chrome" | "edge" | "firefox" | None
 
 
+class KeyRotationConfig(BaseModel):
+    """Cấu hình xoay vòng API key khi chạm giới hạn free.
+
+    - `cooldown_sec = 0` → key chạm giới hạn nghỉ tới hết ngày; >0 → nghỉ đúng số giây.
+      (Header `Retry-After` từ server luôn được ưu tiên.)
+    - `persist` → lưu trạng thái nghỉ ra `<library>/.keystate.json` để giữ qua các
+      lần khởi động trong ngày (chỉ lưu id ẩn danh, không lưu key thật).
+    """
+
+    cooldown_sec: int = 0
+    persist: bool = True
+
+
 def _default_rate_limits() -> dict[str, int]:
     return {"pexels": 200, "pixabay": 100, "unsplash": 50}
 
@@ -66,6 +100,7 @@ class AppConfig(BaseModel):
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     anti_block: AntiBlockConfig = Field(default_factory=AntiBlockConfig)
     ytdlp: YtDlpConfig = Field(default_factory=YtDlpConfig)
+    key_rotation: KeyRotationConfig = Field(default_factory=KeyRotationConfig)
     rate_limits: dict[str, int] = Field(default_factory=_default_rate_limits)
 
 
@@ -88,6 +123,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         dedup=DedupConfig(**data.get("dedup", {})),
         anti_block=AntiBlockConfig(**data.get("anti_block", {})),
         ytdlp=YtDlpConfig(**data.get("ytdlp", {})),
+        key_rotation=KeyRotationConfig(**data.get("key_rotation", {})),
         rate_limits=data.get("rate_limits") or _default_rate_limits(),
     )
 
@@ -115,6 +151,10 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
         "",
         "[anti_block]",
         f"honor_robots_txt = {str(config.anti_block.honor_robots_txt).lower()}",
+        "",
+        "[key_rotation]",
+        f"cooldown_sec = {config.key_rotation.cooldown_sec}",
+        f"persist = {str(config.key_rotation.persist).lower()}",
         "",
         "[ytdlp]",
     ]

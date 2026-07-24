@@ -17,10 +17,10 @@ from mediaharvester.core.downloader import download_with_retry
 from mediaharvester.core.organizer import build_filename, ext_from_url
 from mediaharvester.providers.base import (
     MediaType,
-    Provider,
     SearchResult,
     register_provider,
 )
+from mediaharvester.providers.keyed import KeyedProvider
 
 _BASE = "https://api.pexels.com"
 _LICENSE = "Pexels License"
@@ -42,19 +42,12 @@ def _pick_video_file(video_files: list[dict], quality: str) -> dict | None:
 
 
 @register_provider
-class PexelsProvider(Provider):
+class PexelsProvider(KeyedProvider):
     """Nguồn stock Pexels — ảnh và video miễn phí, license Pexels License."""
 
     name = "pexels"
     supported_types = {MediaType.IMAGE, MediaType.VIDEO}
     requires_api_key = True
-
-    def __init__(self, api_key: str = "", client: httpx.AsyncClient | None = None) -> None:
-        self.api_key = api_key
-        self._client = client or httpx.AsyncClient(timeout=30)
-
-    def _headers(self) -> dict[str, str]:
-        return {"Authorization": self.api_key}
 
     async def search(
         self, query: str, media_type: MediaType, page: int = 1, per_page: int = 30
@@ -65,10 +58,9 @@ class PexelsProvider(Provider):
             url = f"{_BASE}/v1/search"
         else:
             url = f"{_BASE}/videos/search"
-        resp = await self._client.get(
-            url,
-            params={"query": query, "page": page, "per_page": per_page},
-            headers=self._headers(),
+        params = {"query": query, "page": page, "per_page": per_page}
+        resp = await self._request(
+            lambda key: self._client.get(url, params=params, headers={"Authorization": key})
         )
         resp.raise_for_status()
         data = resp.json()
@@ -134,14 +126,16 @@ class PexelsProvider(Provider):
         return await download_with_retry(self._client, url, dest, progress_cb)
 
     async def health_check(self) -> bool:
-        """Kiểm tra API key bằng 1 request search tối thiểu."""
+        """Kiểm tra API key (có xoay vòng) bằng 1 request search tối thiểu."""
         try:
-            resp = await self._client.get(
-                f"{_BASE}/v1/search",
-                params={"query": "test", "per_page": 1},
-                headers=self._headers(),
+            resp = await self._request(
+                lambda key: self._client.get(
+                    f"{_BASE}/v1/search",
+                    params={"query": "test", "per_page": 1},
+                    headers={"Authorization": key},
+                )
             )
             return resp.status_code == 200
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, RuntimeError) as exc:
             logger.warning("Pexels health-check lỗi: {}", exc)
             return False

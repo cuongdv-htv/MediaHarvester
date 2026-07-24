@@ -83,21 +83,33 @@ class MainWindow(QMainWindow):
     def _build_providers(self) -> dict[str, Provider]:
         """Khởi tạo mọi provider khả dụng từ registry (thiếu key thì bỏ qua)."""
         from mediaharvester import providers as providers_pkg
+        from mediaharvester.providers.keyed import KeyedProvider
 
         providers_pkg.load_all()
-        key_map = {
-            "pexels": self.api_keys.pexels_api_key,
-            "pixabay": self.api_keys.pixabay_api_key,
-            "unsplash": self.api_keys.unsplash_access_key,
-        }
+        state_path = (
+            self.config.library_root / ".keystate.json"
+            if self.config.key_rotation.persist
+            else None
+        )
         providers: dict[str, Provider] = {}
         for name, cls in get_registry().items():
-            api_key = key_map.get(name, "")
-            if cls.requires_api_key and not api_key:
-                logger.warning("Thiếu API key cho provider {} — bỏ qua.", name)
-                continue
             try:
-                if name == "ytdlp":
+                if issubclass(cls, KeyedProvider):
+                    key_list = self.api_keys.keys_for(name)
+                    if not key_list:
+                        logger.warning("Thiếu API key cho provider {} — bỏ qua.", name)
+                        continue
+                    providers[name] = cls(
+                        api_keys=key_list,
+                        client=self.client,
+                        cooldown_sec=self.config.key_rotation.cooldown_sec,
+                        state_path=state_path,
+                    )
+                    if len(key_list) > 1:
+                        logger.info(
+                            "{}: {} API key — tự xoay khi chạm giới hạn.", name, len(key_list)
+                        )
+                elif name == "ytdlp":
                     providers[name] = cls(
                         cookies_from_browser=self.config.ytdlp.cookies_from_browser
                     )
@@ -107,7 +119,7 @@ class MainWindow(QMainWindow):
                         honor_robots=self.config.anti_block.honor_robots_txt,
                     )
                 else:
-                    providers[name] = cls(api_key=api_key, client=self.client)
+                    providers[name] = cls(api_key="", client=self.client)
             except Exception as exc:
                 # Provider hỏng không được phép làm app chết
                 logger.warning("Không khởi tạo được provider {}: {} — bỏ qua.", name, exc)

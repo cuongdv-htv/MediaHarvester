@@ -21,6 +21,10 @@ uv run mediaharvester
 ## Cấu hình
 
 - Copy `.env.example` → `.env` và điền API keys (Pexels, Pixabay, Unsplash).
+  - **Xoay vòng nhiều key**: điền nhiều key cách nhau bởi dấu phẩy
+    (vd `PEXELS_API_KEY=key1,key2,key3`) — khi 1 key chạm giới hạn free trong ngày
+    app tự đổi sang key kế tiếp. Trong GUI (tab Cài đặt) nhập mỗi dòng 1 key.
+    Chỉnh hành vi nghỉ ở mục `[key_rotation]` trong `config.toml`.
 - Copy `config.toml.example` → `config.toml` và chỉnh thư mục thư viện, số luồng tải...
 
 ## Đóng gói thành .exe

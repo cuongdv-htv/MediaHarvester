@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 from qasync import asyncSlot
 
 from mediaharvester.core.config import ApiKeys, save_api_keys, save_config
+from mediaharvester.core.keypool import split_keys
 
 if TYPE_CHECKING:
     from mediaharvester.gui.main_window import MainWindow
@@ -44,19 +46,17 @@ class SettingsTab(QWidget):
         root = QVBoxLayout(self)
 
         # ---------- API keys ----------
-        key_box = QGroupBox("API keys (lưu vào .env — không bao giờ nằm trong code/DB)")
+        key_box = QGroupBox(
+            "API keys (lưu vào .env — không bao giờ nằm trong code/DB). "
+            "Nhiều key: mỗi dòng 1 key → app tự xoay khi 1 key chạm giới hạn free."
+        )
         key_form = QFormLayout(key_box)
-        self.pexels_edit = QLineEdit(keys.pexels_api_key)
-        self.pixabay_edit = QLineEdit(keys.pixabay_api_key)
-        self.unsplash_edit = QLineEdit(keys.unsplash_access_key)
-        for edit in (self.pexels_edit, self.pixabay_edit, self.unsplash_edit):
-            edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.pexels_edit = self._make_keys_editor(keys.pexels_api_key)
+        self.pixabay_edit = self._make_keys_editor(keys.pixabay_api_key)
+        self.unsplash_edit = self._make_keys_editor(keys.unsplash_access_key)
         key_form.addRow("Pexels:", self.pexels_edit)
         key_form.addRow("Pixabay:", self.pixabay_edit)
         key_form.addRow("Unsplash:", self.unsplash_edit)
-        self.show_keys_btn = QPushButton("👁 Hiện/ẩn keys")
-        self.show_keys_btn.setCheckable(True)
-        key_form.addRow("", self.show_keys_btn)
         root.addWidget(key_box)
 
         # ---------- Cấu hình chung ----------
@@ -98,7 +98,6 @@ class SettingsTab(QWidget):
         root.addLayout(actions)
         root.addStretch()
 
-        self.show_keys_btn.toggled.connect(self._toggle_keys)
         self.browse_btn.clicked.connect(self._browse_library)
         self.save_btn.clicked.connect(self._save)
         self.update_ytdlp_btn.clicked.connect(self._update_ytdlp)
@@ -106,22 +105,30 @@ class SettingsTab(QWidget):
 
     # ---------- Hành vi ----------
 
-    def _toggle_keys(self, show: bool) -> None:
-        mode = QLineEdit.EchoMode.Normal if show else QLineEdit.EchoMode.Password
-        for edit in (self.pexels_edit, self.pixabay_edit, self.unsplash_edit):
-            edit.setEchoMode(mode)
+    def _make_keys_editor(self, raw: str) -> QPlainTextEdit:
+        """Ô nhập nhiều key (mỗi dòng 1 key), nạp sẵn key hiện có."""
+        editor = QPlainTextEdit()
+        editor.setPlaceholderText("mỗi dòng 1 key (để trống nếu không dùng nguồn này)")
+        editor.setFixedHeight(70)
+        editor.setPlainText("\n".join(split_keys(raw)))
+        return editor
 
     def _browse_library(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục thư viện")
         if folder:
             self.library_edit.setText(folder)
 
+    @staticmethod
+    def _joined_keys(editor: QPlainTextEdit) -> str:
+        """Gộp nhiều key trong ô về chuỗi phân cách bằng dấu phẩy (định dạng .env)."""
+        return ",".join(split_keys(editor.toPlainText()))
+
     def _save(self) -> None:
         """Ghi .env + config.toml. Một số thay đổi cần khởi động lại app."""
         keys = ApiKeys(
-            pexels_api_key=self.pexels_edit.text().strip(),
-            pixabay_api_key=self.pixabay_edit.text().strip(),
-            unsplash_access_key=self.unsplash_edit.text().strip(),
+            pexels_api_key=self._joined_keys(self.pexels_edit),
+            pixabay_api_key=self._joined_keys(self.pixabay_edit),
+            unsplash_access_key=self._joined_keys(self.unsplash_edit),
         )
         config = self.window.config
         config.library_root = Path(self.library_edit.text().strip() or "library")
@@ -137,8 +144,13 @@ class SettingsTab(QWidget):
             self.window.toast(f"Không lưu được cấu hình: {exc}")
             return
         self.window.api_keys = keys
+        counts = {
+            p: len(keys.keys_for(p)) for p in ("pexels", "pixabay", "unsplash")
+        }
+        summary = ", ".join(f"{p}: {n} key" for p, n in counts.items() if n)
         self.window.toast(
-            "Đã lưu. Thay đổi thư mục thư viện / số luồng cần khởi động lại app để áp dụng."
+            f"Đã lưu ({summary or 'chưa có key'}). "
+            "Thay đổi key / thư mục / số luồng cần khởi động lại app để áp dụng."
         )
 
     @asyncSlot()
@@ -179,10 +191,21 @@ class SettingsTab(QWidget):
             )
             lines = []
             for name, ok in zip(names, checks, strict=True):
+                provider = self.window.providers[name]
+                pool = getattr(provider, "keys", None)
+                suffix = ""
+                if pool is not None:
+                    s = pool.stats()
+                    suffix = f"  ({s['ready']}/{s['total']} key sẵn sàng"
+                    if s["cooling"]:
+                        suffix += f", {s['cooling']} đang nghỉ"
+                    if s["invalid"]:
+                        suffix += f", {s['invalid']} lỗi"
+                    suffix += ")"
                 if isinstance(ok, BaseException):
-                    lines.append(f"✘ {name}: {ok}")
+                    lines.append(f"✘ {name}: {ok}{suffix}")
                 else:
-                    lines.append(f"{'✔' if ok else '✘'} {name}")
+                    lines.append(f"{'✔' if ok else '✘'} {name}{suffix}")
             QMessageBox.information(self, "Health-check providers", "\n".join(lines))
         finally:
             self.health_btn.setEnabled(True)
