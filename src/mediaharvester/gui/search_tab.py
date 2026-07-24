@@ -27,7 +27,12 @@ from PySide6.QtWidgets import (
 from qasync import asyncSlot
 
 from mediaharvester.gui.widgets.result_grid import ResultGrid
-from mediaharvester.providers.base import MediaType, SearchResult
+from mediaharvester.providers.base import (
+    MediaType,
+    Orientation,
+    SearchResult,
+    passes_orientation,
+)
 
 if TYPE_CHECKING:
     from mediaharvester.gui.main_window import MainWindow
@@ -37,6 +42,13 @@ _MIN_RES_OPTIONS = [
     ("≥ 720p (1280×720)", 720),
     ("≥ 1080p (1920×1080)", 1080),
     ("≥ 4K (3840×2160)", 2160),
+]
+
+_ORIENTATION_OPTIONS = [
+    ("Mọi hướng", Orientation.ANY),
+    ("Ngang (landscape)", Orientation.LANDSCAPE),
+    ("Dọc (portrait)", Orientation.PORTRAIT),
+    ("Vuông (square)", Orientation.SQUARE),
 ]
 
 
@@ -106,6 +118,12 @@ class SearchTab(QWidget):
         options.addWidget(QLabel("Độ phân giải tối thiểu:"))
         options.addWidget(self.min_res_combo)
 
+        self.orientation_combo = QComboBox()
+        for label, _ in _ORIENTATION_OPTIONS:
+            self.orientation_combo.addItem(label)
+        options.addWidget(QLabel("Hướng khung hình:"))
+        options.addWidget(self.orientation_combo)
+
         options.addWidget(QLabel("Project:"))
         self.project_edit = QLineEdit("default")
         options.addWidget(self.project_edit)
@@ -158,6 +176,10 @@ class SearchTab(QWidget):
             return True  # không rõ resolution thì vẫn hiển thị
         return result.height >= min_height or (result.width or 0) >= min_height * 16 // 9
 
+    def _passes_orientation(self, result: SearchResult) -> bool:
+        wanted = _ORIENTATION_OPTIONS[self.orientation_combo.currentIndex()][1]
+        return passes_orientation(result.width, result.height, wanted)
+
     @asyncSlot()
     async def on_search(self) -> None:
         """Chạy search mọi keyword × provider × loại media song song."""
@@ -200,6 +222,8 @@ class SearchTab(QWidget):
                     continue
                 for result in results:
                     if not self._passes_min_res(result):
+                        continue
+                    if not self._passes_orientation(result):
                         continue
                     row = self.grid.count()
                     size = (

@@ -20,7 +20,14 @@ from mediaharvester import __version__
 from mediaharvester.core.config import ApiKeys, AppConfig, load_config
 from mediaharvester.core.database import get_engine, init_db
 from mediaharvester.core.downloader import DownloadManager, JobState, JobStatus
-from mediaharvester.providers.base import MediaType, Provider, SearchResult, get_registry
+from mediaharvester.providers.base import (
+    MediaType,
+    Orientation,
+    Provider,
+    SearchResult,
+    get_registry,
+    passes_orientation,
+)
 from mediaharvester.utils.logging_setup import setup_logging
 
 
@@ -52,6 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--providers", default="pexels,pixabay",
         help="Danh sách provider, phân cách bằng dấu phẩy (mặc định: pexels,pixabay)",
+    )
+    sp.add_argument(
+        "--orientation", choices=["any", "landscape", "portrait", "square"], default="any",
+        help="Lọc hướng khung hình: ngang/dọc/vuông (mặc định: any = không lọc)",
     )
     sp.add_argument("--limit", type=int, default=20, help="Số kết quả tối đa (mặc định: 20)")
     sp.add_argument("--download", action="store_true", help="Tải các kết quả về máy")
@@ -173,7 +184,11 @@ async def _cmd_search(args: argparse.Namespace) -> int:
                 else:
                     groups.append(outcome)
 
-        results = _interleave(groups)[: args.limit]
+        wanted = Orientation(args.orientation)
+        results = [
+            r for r in _interleave(groups)
+            if passes_orientation(r.width, r.height, wanted)
+        ][: args.limit]
         if not results:
             print("Không tìm thấy kết quả nào.")
             return 0

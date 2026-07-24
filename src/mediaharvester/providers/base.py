@@ -21,6 +21,44 @@ class MediaType(StrEnum):
     VIDEO = "video"
 
 
+class Orientation(StrEnum):
+    """Hướng khung hình dùng để lọc kết quả tìm kiếm."""
+
+    ANY = "any"  # không lọc
+    LANDSCAPE = "landscape"  # ngang (rộng > cao)
+    PORTRAIT = "portrait"  # dọc (cao > rộng)
+    SQUARE = "square"  # vuông (xấp xỉ 1:1)
+
+
+# Ngưỡng tỉ lệ rộng/cao để phân loại: ngoài [1/1.15, 1.15] mới coi là ngang/dọc,
+# còn lại là vuông. Giữ vừa phải để ảnh gần vuông không bị gán nhầm.
+_SQUARE_RATIO = 1.15
+
+
+def classify_orientation(width: int | None, height: int | None) -> Orientation | None:
+    """Phân loại hướng khung hình từ kích thước; trả None nếu không rõ."""
+    if not width or not height:
+        return None
+    ratio = width / height
+    if ratio >= _SQUARE_RATIO:
+        return Orientation.LANDSCAPE
+    if ratio <= 1 / _SQUARE_RATIO:
+        return Orientation.PORTRAIT
+    return Orientation.SQUARE
+
+
+def passes_orientation(
+    width: int | None, height: int | None, wanted: Orientation
+) -> bool:
+    """Kiểm tra kết quả có khớp hướng yêu cầu không; kích thước không rõ → luôn qua."""
+    if wanted == Orientation.ANY:
+        return True
+    actual = classify_orientation(width, height)
+    if actual is None:
+        return True  # không rõ kích thước thì vẫn hiển thị (giống lọc độ phân giải)
+    return actual == wanted
+
+
 @dataclass
 class SearchResult:
     """Một kết quả tìm kiếm chuẩn hóa từ bất kỳ provider nào."""
