@@ -66,11 +66,7 @@ class LibraryTab(QWidget):
 
         actions = QHBoxLayout()
         self.export_btn = QPushButton("📄 Export danh sách nguồn (CSV)")
-        self.download_project_btn = QPushButton("⬇ Tải project đang chọn về máy")
-        self.download_project_btn.setToolTip(
-            "Copy toàn bộ ảnh/video của project đang chọn sang thư mục bạn chỉ định "
-            "(giữ nguyên file gốc trong thư viện)."
-        )
+        self.download_project_btn = QPushButton()
         self.delete_project_btn = QPushButton("🗑 Xóa project đang chọn")
         actions.addWidget(self.export_btn)
         actions.addWidget(self.download_project_btn)
@@ -91,6 +87,7 @@ class LibraryTab(QWidget):
         self.delete_project_btn.clicked.connect(self.delete_project)
         self.search_edit.returnPressed.connect(self.refresh)
         self.project_combo.currentIndexChanged.connect(lambda _: self.refresh())
+        self.project_combo.currentIndexChanged.connect(lambda _: self._update_download_btn())
         self.provider_combo.currentIndexChanged.connect(lambda _: self.refresh())
         self.type_combo.currentIndexChanged.connect(lambda _: self.refresh())
         self.grid.itemDoubleClicked.connect(self._open_file)
@@ -103,6 +100,7 @@ class LibraryTab(QWidget):
         self._refresh_timer.timeout.connect(self.reload_and_refresh)
 
         self._loading_filters = False
+        self._update_download_btn()
         self.reload_and_refresh()
 
     # ---------- Dữ liệu ----------
@@ -277,6 +275,27 @@ class LibraryTab(QWidget):
                 return []
             return list(session.exec(select(Asset).where(Asset.project_id == row.id)).all())
 
+    def _all_assets(self) -> list[Asset]:
+        """Toàn bộ asset của mọi project trong thư viện."""
+        with get_session(self.window.engine) as session:
+            return list(session.exec(select(Asset)).all())
+
+    def _update_download_btn(self) -> None:
+        """Đổi nhãn nút tải theo lựa chọn ở dropdown để rõ sẽ tải phạm vi nào."""
+        project = self._selected_project()
+        if project is None:
+            self.download_project_btn.setText("⬇ Tải toàn bộ thư viện về máy")
+            self.download_project_btn.setToolTip(
+                "Copy ảnh/video của TẤT CẢ project sang thư mục bạn chỉ định — "
+                "mỗi project nằm trong một thư mục con. Giữ nguyên file gốc trong thư viện."
+            )
+        else:
+            self.download_project_btn.setText(f"⬇ Tải project '{project}' về máy")
+            self.download_project_btn.setToolTip(
+                f"Copy toàn bộ ảnh/video của project '{project}' sang thư mục bạn chỉ định "
+                "(giữ nguyên file gốc trong thư viện)."
+            )
+
     @staticmethod
     def _copy_media(
         assets: list[Asset], library_root: Path, dest_root: Path
@@ -319,40 +338,45 @@ class LibraryTab(QWidget):
 
     @asyncSlot()
     async def download_project(self) -> None:
-        """Copy toàn bộ ảnh/video của project đang chọn sang thư mục người dùng chọn."""
+        """Copy ảnh/video ra thư mục người dùng chọn.
+
+        Phạm vi theo dropdown Project: một project cụ thể, hoặc **toàn bộ thư viện**
+        khi đang để 'Tất cả project' (mỗi project thành một thư mục con).
+        """
         project = self._selected_project()
         if project is None:
-            self.window.toast(
-                "Hãy chọn một project cụ thể ở ô Project trước (đang là 'Tất cả project')."
-            )
-            return
-        assets = [
-            a for a in self._project_assets(project) if a.media_type in ("image", "video")
-        ]
+            source = self._all_assets()
+            scope = "toàn bộ thư viện"
+        else:
+            source = self._project_assets(project)
+            scope = f"project '{project}'"
+        assets = [a for a in source if a.media_type in ("image", "video")]
         if not assets:
-            self.window.toast(f"Project '{project}' chưa có ảnh/video nào.")
+            self.window.toast(f"Chưa có ảnh/video nào trong {scope}.")
             return
+        n_projects = len({a.project_id for a in assets})
 
         dest = QFileDialog.getExistingDirectory(
-            self, f"Chọn thư mục lưu {len(assets)} file của project '{project}'"
+            self, f"Chọn thư mục lưu {len(assets)} file của {scope}"
         )
         if not dest:
             return
 
+        label = self.download_project_btn.text()
         self.download_project_btn.setEnabled(False)
         self.download_project_btn.setText("Đang copy...")
-        self.window.toast(f"Đang copy {len(assets)} file của project '{project}'...")
+        self.window.toast(f"Đang copy {len(assets)} file của {scope}...")
         try:
             copied, existed, missing, failed = await asyncio.to_thread(
                 self._copy_media, assets, self.window.config.library_root, Path(dest)
             )
         except OSError as exc:
-            logger.error("Tải project lỗi: {}", exc)
+            logger.error("Tải {} lỗi: {}", scope, exc)
             self.window.toast(f"Không copy được: {exc}")
             return
         finally:
             self.download_project_btn.setEnabled(True)
-            self.download_project_btn.setText("⬇ Tải project đang chọn về máy")
+            self.download_project_btn.setText(label)
 
         parts = [f"đã copy {copied} file"]
         if existed:
@@ -361,10 +385,11 @@ class LibraryTab(QWidget):
             parts.append(f"{missing} file không còn trên đĩa")
         if failed:
             parts.append(f"{failed} lỗi")
+        summary = f"Xong: {', '.join(parts)}."
+        if project is None:
+            summary += f"\nTừ {n_projects} project (mỗi project một thư mục con)."
         QMessageBox.information(
-            self,
-            f"Tải project '{project}'",
-            f"Xong: {', '.join(parts)}.\n\nThư mục đích:\n{dest}",
+            self, f"Tải {scope}", f"{summary}\n\nThư mục đích:\n{dest}"
         )
 
     @staticmethod

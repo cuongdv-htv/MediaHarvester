@@ -61,6 +61,30 @@ def test_project_moi_hien_trong_dropdown_sau_khi_them_queue(tmp_path, monkeypatc
         app.processEvents()
 
 
+def test_nhan_nut_tai_doi_theo_lua_chon(tmp_path, monkeypatch) -> None:
+    """'Tất cả project' → tải toàn bộ thư viện; chọn 1 project → tải riêng project đó."""
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    from mediaharvester.gui.main_window import MainWindow
+
+    window = MainWindow()
+    try:
+        lib = window.library_tab
+        window.manager.add(_make_result(), keyword="test", project="du-an-abc")
+        lib.reload_and_refresh()
+
+        lib.project_combo.setCurrentIndex(0)  # Tất cả project
+        assert "toàn bộ thư viện" in lib.download_project_btn.text()
+
+        lib.project_combo.setCurrentIndex(lib.project_combo.findText("du-an-abc"))
+        assert "du-an-abc" in lib.download_project_btn.text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_reload_filters_giu_nguyen_lua_chon(tmp_path, monkeypatch) -> None:
     """Nạp lại bộ lọc không được làm mất project người dùng đang chọn."""
     monkeypatch.chdir(tmp_path)

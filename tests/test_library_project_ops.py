@@ -95,6 +95,24 @@ def test_copy_media_dem_file_thieu(tmp_path) -> None:
     assert (copied, missing, failed) == (1, 1, 0)
 
 
+def test_copy_media_nhieu_project_moi_project_mot_thu_muc(tmp_path) -> None:
+    """Tải toàn bộ thư viện: mỗi project nằm gọn trong thư mục con của nó."""
+    lib = tmp_path / "library"
+    a = lib / "du-an-1" / "image" / "solar" / "a.jpg"
+    b = lib / "du-an-2" / "video" / "wind" / "b.mp4"
+    for p in (a, b):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"x" + p.name.encode())
+    assets = [_asset(a), _asset(b, "video")]
+    dest = tmp_path / "xuat"
+
+    copied, _, missing, failed = LibraryTab._copy_media(assets, lib, dest)
+
+    assert (copied, missing, failed) == (2, 0, 0)
+    assert (dest / "du-an-1" / "image" / "solar" / "a.jpg").exists()
+    assert (dest / "du-an-2" / "video" / "wind" / "b.mp4").exists()
+
+
 def test_delete_files_xoa_ca_sidecar_thumbnail_va_don_thu_muc(tmp_path) -> None:
     """Xóa file media + sidecar + thumbnail rồi dọn sạch thư mục project rỗng."""
     lib, assets = _make_library(tmp_path)
