@@ -69,7 +69,7 @@ class LibraryTab(QWidget):
         self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         root.addWidget(self.grid, stretch=1)
 
-        self.refresh_btn.clicked.connect(self.refresh)
+        self.refresh_btn.clicked.connect(self.reload_and_refresh)
         self.export_btn.clicked.connect(self.export_csv)
         self.search_edit.returnPressed.connect(self.refresh)
         self.project_combo.currentIndexChanged.connect(lambda _: self.refresh())
@@ -82,11 +82,10 @@ class LibraryTab(QWidget):
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(1500)
-        self._refresh_timer.timeout.connect(self.refresh)
+        self._refresh_timer.timeout.connect(self.reload_and_refresh)
 
         self._loading_filters = False
-        self.reload_filters()
-        self.refresh()
+        self.reload_and_refresh()
 
     # ---------- Dữ liệu ----------
 
@@ -94,21 +93,43 @@ class LibraryTab(QWidget):
         """Gọi khi có asset mới — refresh sau 1.5s (gộp nhiều lần thành một)."""
         self._refresh_timer.start()
 
+    @staticmethod
+    def _restore_choice(combo: QComboBox, text: str) -> None:
+        """Chọn lại mục cũ nếu vẫn còn trong danh sách (không còn thì về 'Tất cả')."""
+        if not text:
+            return
+        idx = combo.findText(text)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
     def reload_filters(self) -> None:
-        """Nạp danh sách project/provider vào combo lọc."""
+        """Nạp danh sách project/provider vào combo lọc, giữ nguyên lựa chọn hiện tại.
+
+        Cần gọi lại sau khi tải xong vì project/nguồn mới chỉ xuất hiện trong DB
+        tại thời điểm job được thêm vào hàng đợi.
+        """
         self._loading_filters = True
         try:
             with get_session(self.window.engine) as session:
                 projects = session.exec(select(Project.name)).all()
                 providers = session.exec(select(Asset.provider).distinct()).all()
+            prev_project = self.project_combo.currentText()
+            prev_provider = self.provider_combo.currentText()
             self.project_combo.clear()
             self.project_combo.addItem("Tất cả project")
             self.project_combo.addItems(list(projects))
             self.provider_combo.clear()
             self.provider_combo.addItem("Tất cả nguồn")
             self.provider_combo.addItems(sorted(providers))
+            self._restore_choice(self.project_combo, prev_project)
+            self._restore_choice(self.provider_combo, prev_provider)
         finally:
             self._loading_filters = False
+
+    def reload_and_refresh(self) -> None:
+        """Nạp lại bộ lọc (bắt project/nguồn mới) rồi vẽ lại lưới asset."""
+        self.reload_filters()
+        self.refresh()
 
     def refresh(self) -> None:
         """Query DB theo bộ lọc và đổ vào grid thumbnail."""
