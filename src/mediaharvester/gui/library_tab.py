@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -68,9 +71,14 @@ class LibraryTab(QWidget):
         self.export_btn = QPushButton("📄 Export danh sách nguồn (CSV)")
         self.download_project_btn = QPushButton()
         self.delete_project_btn = QPushButton("🗑 Xóa project đang chọn")
+        self.delete_all_btn = QPushButton("🗑 Xóa toàn bộ project...")
+        self.delete_all_btn.setToolTip(
+            "Xóa nhiều project cùng lúc — hộp thoại cho tích chọn project cần giữ lại."
+        )
         actions.addWidget(self.export_btn)
         actions.addWidget(self.download_project_btn)
         actions.addWidget(self.delete_project_btn)
+        actions.addWidget(self.delete_all_btn)
         actions.addStretch()
         root.addLayout(actions)
 
@@ -85,6 +93,7 @@ class LibraryTab(QWidget):
         self.export_btn.clicked.connect(self.export_csv)
         self.download_project_btn.clicked.connect(self.download_project)
         self.delete_project_btn.clicked.connect(self.delete_project)
+        self.delete_all_btn.clicked.connect(self.delete_all_projects)
         self.search_edit.returnPressed.connect(self.refresh)
         self.project_combo.currentIndexChanged.connect(lambda _: self.refresh())
         self.project_combo.currentIndexChanged.connect(lambda _: self._update_download_btn())
@@ -423,9 +432,53 @@ class LibraryTab(QWidget):
                 pass
         return removed
 
+    @staticmethod
+    def _delete_files_for_projects(
+        per_project_assets: dict[str, list[Asset]], thumb_dir: Path, library_root: Path
+    ) -> int:
+        """Xóa file của nhiều project (dùng lại _delete_files cho từng project)."""
+        return sum(
+            LibraryTab._delete_files(assets, thumb_dir, library_root / name)
+            for name, assets in per_project_assets.items()
+        )
+
+    def _remove_projects_from_db(self, names: list[str]) -> int:
+        """Xóa record project + asset của nó khỏi DB. Trả về số asset đã gỡ."""
+        removed_assets = 0
+        with get_session(self.window.engine) as session:
+            for name in names:
+                row = session.exec(select(Project).where(Project.name == name)).first()
+                if row is None:
+                    continue
+                for asset in session.exec(
+                    select(Asset).where(Asset.project_id == row.id)
+                ).all():
+                    session.delete(asset)
+                    removed_assets += 1
+                session.delete(row)
+            session.commit()
+        return removed_assets
+
+    async def _purge_projects(self, names: list[str], delete_files: bool) -> tuple[int, int]:
+        """Xóa các project: (tùy chọn) file trên đĩa rồi record DB.
+
+        Trả về (số asset đã gỡ, số file đã xóa trên đĩa).
+        """
+        per_project_assets = {name: self._project_assets(name) for name in names}
+        removed_files = 0
+        if delete_files:
+            removed_files = await asyncio.to_thread(
+                self._delete_files_for_projects,
+                per_project_assets,
+                self.window.config.library_root / ".thumbnails",
+                self.window.config.library_root,
+            )
+        removed_assets = self._remove_projects_from_db(names)
+        return removed_assets, removed_files
+
     @asyncSlot()
     async def delete_project(self) -> None:
-        """Xóa project khỏi thư viện; có tùy chọn xóa luôn file trên đĩa."""
+        """Xóa project đang chọn khỏi thư viện; có tùy chọn xóa luôn file trên đĩa."""
         project = self._selected_project()
         if project is None:
             self.window.toast(
@@ -452,34 +505,117 @@ class LibraryTab(QWidget):
             return
         delete_files = checkbox.isChecked()
 
-        removed = 0
-        if delete_files and assets:
+        if delete_files:
             self.window.toast(f"Đang xóa file của project '{project}'...")
-            removed = await asyncio.to_thread(
-                self._delete_files,
-                assets,
-                self.window.config.library_root / ".thumbnails",
-                self.window.config.library_root / project,
-            )
-
         try:
-            with get_session(self.window.engine) as session:
-                row = session.exec(select(Project).where(Project.name == project)).first()
-                if row is not None:
-                    for asset in session.exec(
-                        select(Asset).where(Asset.project_id == row.id)
-                    ).all():
-                        session.delete(asset)
-                    session.delete(row)
-                    session.commit()
-        except Exception as exc:  # DB lỗi không được làm chết app
+            removed_assets, removed_files = await self._purge_projects([project], delete_files)
+        except Exception as exc:  # DB/IO lỗi không được làm chết app
             logger.exception("Xóa project lỗi: {}", exc)
             self.window.toast(f"Không xóa được project: {exc}")
             return
 
-        detail = f"đã xóa {removed} file trên đĩa" if delete_files else "file trên đĩa được giữ lại"
-        self.window.toast(f"Đã xóa project '{project}' ({len(assets)} asset, {detail}).")
+        detail = (
+            f"đã xóa {removed_files} file trên đĩa"
+            if delete_files
+            else "file trên đĩa được giữ lại"
+        )
+        self.window.toast(f"Đã xóa project '{project}' ({removed_assets} asset, {detail}).")
         self.reload_and_refresh()
+
+    @asyncSlot()
+    async def delete_all_projects(self) -> None:
+        """Xóa nhiều project cùng lúc — hộp thoại cho tích chọn project cần giữ lại."""
+        with get_session(self.window.engine) as session:
+            names = sorted(session.exec(select(Project.name)).all())
+        if not names:
+            self.window.toast("Chưa có project nào trong thư viện.")
+            return
+        counts = {name: len(self._project_assets(name)) for name in names}
+
+        chosen = self._ask_projects_to_delete(names, counts)
+        if chosen is None:
+            return
+        to_delete, delete_files = chosen
+        if not to_delete:
+            self.window.toast("Không có project nào được chọn để xóa.")
+            return
+
+        if delete_files:
+            self.window.toast(f"Đang xóa file của {len(to_delete)} project...")
+        try:
+            removed_assets, removed_files = await self._purge_projects(to_delete, delete_files)
+        except Exception as exc:  # DB/IO lỗi không được làm chết app
+            logger.exception("Xóa toàn bộ project lỗi: {}", exc)
+            self.window.toast(f"Không xóa được: {exc}")
+            return
+
+        detail = (
+            f"đã xóa {removed_files} file trên đĩa"
+            if delete_files
+            else "file trên đĩa được giữ lại"
+        )
+        self.window.toast(
+            f"Đã xóa {len(to_delete)} project ({removed_assets} asset, {detail})."
+        )
+        self.reload_and_refresh()
+
+    def _ask_projects_to_delete(
+        self, names: list[str], counts: dict[str, int]
+    ) -> tuple[list[str], bool] | None:
+        """Hộp thoại tích chọn project để XÓA. None nếu người dùng hủy.
+
+        Mặc định tích sẵn mọi project (sẽ xóa) trừ 'default' (giữ lại). Người dùng
+        bỏ tích những project muốn giữ (vd project test).
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Xóa toàn bộ project")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(
+            QLabel(
+                "Chọn project muốn <b>XÓA</b> (bỏ tích để giữ lại):"
+            )
+        )
+
+        checks: dict[str, QCheckBox] = {}
+        inner = QWidget()
+        inner_layout = QVBoxLayout(inner)
+        for name in names:
+            cb = QCheckBox(f"{name}  ({counts.get(name, 0)} asset)")
+            cb.setChecked(name != "default")  # giữ 'default' theo mặc định
+            checks[name] = cb
+            inner_layout.addWidget(cb)
+        inner_layout.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(inner)
+        scroll.setMinimumHeight(200)
+        layout.addWidget(scroll)
+
+        sel_row = QHBoxLayout()
+        all_btn = QPushButton("Chọn tất cả")
+        none_btn = QPushButton("Bỏ chọn tất cả")
+        all_btn.clicked.connect(lambda: [c.setChecked(True) for c in checks.values()])
+        none_btn.clicked.connect(lambda: [c.setChecked(False) for c in checks.values()])
+        sel_row.addWidget(all_btn)
+        sel_row.addWidget(none_btn)
+        sel_row.addStretch()
+        layout.addLayout(sel_row)
+
+        disk_check = QCheckBox("Xóa luôn file trên đĩa (không hoàn tác được)")
+        layout.addWidget(disk_check)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setDefault(True)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        to_delete = [name for name, cb in checks.items() if cb.isChecked()]
+        return to_delete, disk_check.isChecked()
 
     def export_csv(self) -> None:
         """Xuất danh sách nguồn (phục vụ ghi credit) ra CSV."""

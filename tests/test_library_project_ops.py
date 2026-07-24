@@ -127,6 +127,27 @@ def test_delete_files_xoa_ca_sidecar_thumbnail_va_don_thu_muc(tmp_path) -> None:
     assert not (lib / "duan").exists()  # thư mục project rỗng đã được dọn
 
 
+def test_delete_files_for_projects_nhieu_project(tmp_path) -> None:
+    """Xóa file của nhiều project cùng lúc, cộng dồn số file đã xóa."""
+    lib = tmp_path / "library"
+    a = lib / "du-an-1" / "image" / "kw" / "a.jpg"
+    b = lib / "du-an-2" / "image" / "kw" / "b.jpg"
+    for p in (a, b):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(p.name.encode())
+
+    removed = LibraryTab._delete_files_for_projects(
+        {"du-an-1": [_asset(a)], "du-an-2": [_asset(b)]},
+        lib / ".thumbnails",
+        lib,
+    )
+
+    assert removed == 2
+    assert not a.exists() and not b.exists()
+    assert not (lib / "du-an-1").exists()
+    assert not (lib / "du-an-2").exists()
+
+
 def test_delete_files_giu_file_la_trong_thu_muc(tmp_path) -> None:
     """Thư mục còn file khác (người dùng tự bỏ vào) thì không bị xóa."""
     lib, assets = _make_library(tmp_path)
