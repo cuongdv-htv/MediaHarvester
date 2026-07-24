@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -13,6 +15,7 @@ from loguru import logger
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -24,6 +27,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from qasync import asyncSlot
 from sqlmodel import select
 
 from mediaharvester.core.database import get_session
@@ -51,7 +55,6 @@ class LibraryTab(QWidget):
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Tìm theo tiêu đề/từ khóa...")
         self.refresh_btn = QPushButton("🔄 Làm mới")
-        self.export_btn = QPushButton("📄 Export danh sách nguồn (CSV)")
         filters.addWidget(QLabel("Project:"))
         filters.addWidget(self.project_combo)
         filters.addWidget(QLabel("Nguồn:"))
@@ -59,8 +62,21 @@ class LibraryTab(QWidget):
         filters.addWidget(self.type_combo)
         filters.addWidget(self.search_edit, stretch=1)
         filters.addWidget(self.refresh_btn)
-        filters.addWidget(self.export_btn)
         root.addLayout(filters)
+
+        actions = QHBoxLayout()
+        self.export_btn = QPushButton("📄 Export danh sách nguồn (CSV)")
+        self.download_project_btn = QPushButton("⬇ Tải project đang chọn về máy")
+        self.download_project_btn.setToolTip(
+            "Copy toàn bộ ảnh/video của project đang chọn sang thư mục bạn chỉ định "
+            "(giữ nguyên file gốc trong thư viện)."
+        )
+        self.delete_project_btn = QPushButton("🗑 Xóa project đang chọn")
+        actions.addWidget(self.export_btn)
+        actions.addWidget(self.download_project_btn)
+        actions.addWidget(self.delete_project_btn)
+        actions.addStretch()
+        root.addLayout(actions)
 
         self.count_label = QLabel("")
         root.addWidget(self.count_label)
@@ -71,6 +87,8 @@ class LibraryTab(QWidget):
 
         self.refresh_btn.clicked.connect(self.reload_and_refresh)
         self.export_btn.clicked.connect(self.export_csv)
+        self.download_project_btn.clicked.connect(self.download_project)
+        self.delete_project_btn.clicked.connect(self.delete_project)
         self.search_edit.returnPressed.connect(self.refresh)
         self.project_combo.currentIndexChanged.connect(lambda _: self.refresh())
         self.provider_combo.currentIndexChanged.connect(lambda _: self.refresh())
@@ -242,6 +260,201 @@ class LibraryTab(QWidget):
         except OSError as exc:
             logger.error("Xóa asset lỗi: {}", exc)
             self.window.toast(f"Không xóa được: {exc}")
+
+    # ---------- Thao tác theo project ----------
+
+    def _selected_project(self) -> str | None:
+        """Tên project đang chọn; None nếu đang để 'Tất cả project'."""
+        if self.project_combo.currentIndex() <= 0:
+            return None
+        return self.project_combo.currentText()
+
+    def _project_assets(self, project: str) -> list[Asset]:
+        """Toàn bộ asset thuộc 1 project (rỗng nếu project không còn)."""
+        with get_session(self.window.engine) as session:
+            row = session.exec(select(Project).where(Project.name == project)).first()
+            if row is None:
+                return []
+            return list(session.exec(select(Asset).where(Asset.project_id == row.id)).all())
+
+    @staticmethod
+    def _copy_media(
+        assets: list[Asset], library_root: Path, dest_root: Path
+    ) -> tuple[int, int, int, int]:
+        """Copy file ảnh/video sang `dest_root`, giữ cấu trúc thư mục của thư viện.
+
+        Chỉ copy chính file media — không kèm sidecar .meta.json hay thumbnail.
+        Trả về (đã copy, đã có sẵn, thiếu file, lỗi).
+        """
+        lib = library_root.resolve()
+        copied = existed = missing = failed = 0
+        for asset in assets:
+            src = Path(asset.file_path)
+            if not src.exists():
+                missing += 1
+                logger.warning("Bỏ qua (file không còn): {}", src)
+                continue
+            resolved = src.resolve()
+            rel = (
+                resolved.relative_to(lib) if resolved.is_relative_to(lib) else Path(src.name)
+            )
+            target = dest_root / rel
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    if target.stat().st_size == resolved.stat().st_size:
+                        existed += 1  # đã copy lần trước — bỏ qua, không ghi đè
+                        continue
+                    # Trùng tên nhưng khác nội dung → thêm hậu tố, tuyệt đối không ghi đè
+                    stem, suffix, n = target.stem, target.suffix, 2
+                    while target.exists():
+                        target = target.with_name(f"{stem}_{n}{suffix}")
+                        n += 1
+                shutil.copy2(resolved, target)
+                copied += 1
+            except OSError as exc:
+                failed += 1
+                logger.error("Copy lỗi {} → {}: {}", src, target, exc)
+        return copied, existed, missing, failed
+
+    @asyncSlot()
+    async def download_project(self) -> None:
+        """Copy toàn bộ ảnh/video của project đang chọn sang thư mục người dùng chọn."""
+        project = self._selected_project()
+        if project is None:
+            self.window.toast(
+                "Hãy chọn một project cụ thể ở ô Project trước (đang là 'Tất cả project')."
+            )
+            return
+        assets = [
+            a for a in self._project_assets(project) if a.media_type in ("image", "video")
+        ]
+        if not assets:
+            self.window.toast(f"Project '{project}' chưa có ảnh/video nào.")
+            return
+
+        dest = QFileDialog.getExistingDirectory(
+            self, f"Chọn thư mục lưu {len(assets)} file của project '{project}'"
+        )
+        if not dest:
+            return
+
+        self.download_project_btn.setEnabled(False)
+        self.download_project_btn.setText("Đang copy...")
+        self.window.toast(f"Đang copy {len(assets)} file của project '{project}'...")
+        try:
+            copied, existed, missing, failed = await asyncio.to_thread(
+                self._copy_media, assets, self.window.config.library_root, Path(dest)
+            )
+        except OSError as exc:
+            logger.error("Tải project lỗi: {}", exc)
+            self.window.toast(f"Không copy được: {exc}")
+            return
+        finally:
+            self.download_project_btn.setEnabled(True)
+            self.download_project_btn.setText("⬇ Tải project đang chọn về máy")
+
+        parts = [f"đã copy {copied} file"]
+        if existed:
+            parts.append(f"{existed} file đã có sẵn")
+        if missing:
+            parts.append(f"{missing} file không còn trên đĩa")
+        if failed:
+            parts.append(f"{failed} lỗi")
+        QMessageBox.information(
+            self,
+            f"Tải project '{project}'",
+            f"Xong: {', '.join(parts)}.\n\nThư mục đích:\n{dest}",
+        )
+
+    @staticmethod
+    def _delete_files(assets: list[Asset], thumb_dir: Path, project_dir: Path) -> int:
+        """Xóa file media + sidecar + thumbnail của các asset; dọn thư mục rỗng."""
+        removed = 0
+        for asset in assets:
+            path = Path(asset.file_path)
+            try:
+                if path.exists():
+                    path.unlink()
+                    removed += 1
+                Path(asset.file_path + ".meta.json").unlink(missing_ok=True)
+                (thumb_dir / f"{path.stem}.jpg").unlink(missing_ok=True)
+            except OSError as exc:
+                logger.error("Không xóa được {}: {}", path, exc)
+        # Dọn thư mục rỗng còn lại của project (từ trong ra ngoài)
+        if project_dir.exists():
+            for folder in sorted(
+                (p for p in project_dir.rglob("*") if p.is_dir()),
+                key=lambda p: len(p.parts),
+                reverse=True,
+            ):
+                try:
+                    folder.rmdir()
+                except OSError:
+                    pass  # còn file khác — giữ nguyên
+            try:
+                project_dir.rmdir()
+            except OSError:
+                pass
+        return removed
+
+    @asyncSlot()
+    async def delete_project(self) -> None:
+        """Xóa project khỏi thư viện; có tùy chọn xóa luôn file trên đĩa."""
+        project = self._selected_project()
+        if project is None:
+            self.window.toast(
+                "Hãy chọn một project cụ thể ở ô Project trước (đang là 'Tất cả project')."
+            )
+            return
+        assets = self._project_assets(project)
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Xóa project")
+        box.setText(f"Xóa project '{project}' khỏi thư viện?")
+        box.setInformativeText(
+            f"{len(assets)} asset sẽ bị gỡ khỏi thư viện.\n\n"
+            "Mặc định file trên đĩa được GIỮ LẠI — tick ô bên dưới nếu muốn xóa hẳn."
+        )
+        checkbox = QCheckBox("Xóa luôn file trên đĩa (không hoàn tác được)")
+        box.setCheckBox(checkbox)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        delete_files = checkbox.isChecked()
+
+        removed = 0
+        if delete_files and assets:
+            self.window.toast(f"Đang xóa file của project '{project}'...")
+            removed = await asyncio.to_thread(
+                self._delete_files,
+                assets,
+                self.window.config.library_root / ".thumbnails",
+                self.window.config.library_root / project,
+            )
+
+        try:
+            with get_session(self.window.engine) as session:
+                row = session.exec(select(Project).where(Project.name == project)).first()
+                if row is not None:
+                    for asset in session.exec(
+                        select(Asset).where(Asset.project_id == row.id)
+                    ).all():
+                        session.delete(asset)
+                    session.delete(row)
+                    session.commit()
+        except Exception as exc:  # DB lỗi không được làm chết app
+            logger.exception("Xóa project lỗi: {}", exc)
+            self.window.toast(f"Không xóa được project: {exc}")
+            return
+
+        detail = f"đã xóa {removed} file trên đĩa" if delete_files else "file trên đĩa được giữ lại"
+        self.window.toast(f"Đã xóa project '{project}' ({len(assets)} asset, {detail}).")
+        self.reload_and_refresh()
 
     def export_csv(self) -> None:
         """Xuất danh sách nguồn (phục vụ ghi credit) ra CSV."""
