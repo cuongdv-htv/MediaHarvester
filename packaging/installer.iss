@@ -3,7 +3,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\installer.iss
 
 #define MyAppName "MediaHarvester"
-#define MyAppVersion "0.2.4"
+#define MyAppVersion "0.2.5"
 #define MyAppPublisher "cuongdv-htv"
 #define MyAppURL "https://github.com/cuongdv-htv/MediaHarvester"
 #define MyAppExeName "MediaHarvester.exe"
