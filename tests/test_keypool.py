@@ -122,6 +122,47 @@ async def test_pexels_xoay_key_khi_429() -> None:
 
 
 @respx.mock
+async def test_unsplash_403_la_het_quota_khong_phai_key_sai() -> None:
+    """Unsplash báo hết rate-limit bằng 403 → phải cho key NGHỈ, không loại hẳn.
+
+    Nếu coi 403 là key sai thì mỗi lần chạm giới hạn sẽ mất vĩnh viễn 1 key,
+    chỉ vài lượt là sạch pool và không còn gì để xoay.
+    """
+    from mediaharvester.providers.unsplash import UnsplashProvider
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "k1" in request.headers.get("Authorization", ""):
+            return httpx.Response(403)
+        return httpx.Response(200, json={"results": []})
+
+    respx.get("https://api.unsplash.com/search/photos").mock(side_effect=handler)
+    async with httpx.AsyncClient() as client:
+        provider = UnsplashProvider(api_keys=["k1", "k2"], client=client)
+        await provider.search("solar", MediaType.IMAGE)
+
+    stats = provider.keys.stats()
+    assert stats["invalid"] == 0, "403 không được coi là key sai"
+    assert stats["cooling"] == 1
+    assert stats["ready"] == 1
+
+
+@respx.mock
+async def test_401_moi_la_key_sai() -> None:
+    """401 mới là key sai thật → loại khỏi vòng xoay."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("Authorization") == "k1":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"photos": []})
+
+    respx.get("https://api.pexels.com/v1/search").mock(side_effect=handler)
+    async with httpx.AsyncClient() as client:
+        provider = PexelsProvider(api_keys=["k1", "k2"], client=client)
+        await provider.search("solar", MediaType.IMAGE)
+
+    assert provider.keys.stats()["invalid"] == 1
+
+
+@respx.mock
 async def test_pexels_het_key_thi_raise() -> None:
     """Mọi key đều 429 → RuntimeError để báo lỗi thân thiện."""
     respx.get("https://api.pexels.com/v1/search").mock(

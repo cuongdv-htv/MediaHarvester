@@ -69,8 +69,10 @@ class KeyedProvider(Provider):
     ) -> httpx.Response:
         """Gọi `make(key)` có xoay key khi chạm giới hạn.
 
-        - 429 hoặc 403-do-quota → key nghỉ, thử key kế tiếp.
-        - 401/403 auth → loại key, thử key kế tiếp.
+        - 429 hoặc 403 → key nghỉ, thử key kế tiếp. Unsplash báo **hết rate-limit
+          bằng 403** (không phải 401) nên 403 luôn được coi là chạm giới hạn —
+          nếu loại hẳn key ở đây thì chỉ vài lượt là sạch pool và hết đường xoay.
+        - 401 → key sai thật, loại khỏi vòng rồi thử key kế tiếp.
         - Thành công mà quota về 0 → chủ động cho key nghỉ (lần sau xoay ngay).
         Hết key khả dụng → raise RuntimeError để caller báo lỗi thân thiện.
         """
@@ -81,10 +83,10 @@ class KeyedProvider(Provider):
                 break
             resp = await make(key)
             status = resp.status_code
-            if status == 429 or (status == 403 and _remaining_zero(resp)):
+            if status in (429, 403):
                 self.keys.mark_exhausted(key, _retry_after(resp))
                 continue
-            if status in (401, 403):
+            if status == 401:
                 self.keys.mark_invalid(key)
                 continue
             if resp.is_success and _remaining_zero(resp):

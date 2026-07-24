@@ -235,13 +235,27 @@ class DownloadManager:
         self._pause = asyncio.Event()
         self._pause.set()  # set = đang chạy
         self.rate_limiters: dict[str, RateLimiter] = {
-            name: RateLimiter(limit) for name, limit in config.rate_limits.items()
+            name: RateLimiter(limit * self._key_count(name))
+            for name, limit in config.rate_limits.items()
         }
         self.states: list[JobState] = []
         self._project_ids: dict[str, int] = {}
         self._project_id = self._ensure_project(project_name)
 
     # ---------- API điều khiển ----------
+
+    def _key_count(self, provider_name: str) -> int:
+        """Số API key của provider (≥1) — quota giờ được nhân theo số key.
+
+        `rate_limits` trong config là hạn mức của **một** key. Khi người dùng khai
+        báo nhiều key xoay vòng thì hạn mức thực tế tăng theo số key; không nhân
+        thì app tự chờ ở mức 1 key dù còn hàng chục key chưa dùng.
+        """
+        pool = getattr(self.providers.get(provider_name), "keys", None)
+        try:
+            return max(1, len(pool))  # type: ignore[arg-type]
+        except TypeError:
+            return 1
 
     def _ensure_project(self, name: str) -> int:
         """Lấy (hoặc tạo) project id theo tên, có cache."""
