@@ -1,6 +1,6 @@
 [project]
 name = "mediaharvester"
-version = "0.2.5"
+version = "0.2.6"
 description = "App desktop Windows giúp editor video tìm kiếm + tải hàng loạt ảnh/video từ nhiều nguồn internet"
 readme = "README.md"
 requires-python = ">=3.12"
