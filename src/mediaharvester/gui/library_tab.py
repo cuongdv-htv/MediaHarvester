@@ -307,11 +307,15 @@ class LibraryTab(QWidget):
 
     @staticmethod
     def _copy_media(
-        assets: list[Asset], library_root: Path, dest_root: Path
+        assets: list[Asset], library_root: Path, dest_root: Path, flatten: bool = False
     ) -> tuple[int, int, int, int]:
-        """Copy file ảnh/video sang `dest_root`, giữ cấu trúc thư mục của thư viện.
+        """Copy file ảnh/video sang `dest_root`. Chỉ copy chính file media —
+        không kèm sidecar .meta.json hay thumbnail.
 
-        Chỉ copy chính file media — không kèm sidecar .meta.json hay thumbnail.
+        - `flatten=False`: giữ nguyên cấu trúc thư viện `project/loại/từ-khóa/file`.
+        - `flatten=True`: mỗi project một folder, mọi file nằm trực tiếp trong đó
+          (bỏ các thư mục con loại/từ-khóa).
+
         Trả về (đã copy, đã có sẵn, thiếu file, lỗi).
         """
         lib = library_root.resolve()
@@ -326,7 +330,12 @@ class LibraryTab(QWidget):
             rel = (
                 resolved.relative_to(lib) if resolved.is_relative_to(lib) else Path(src.name)
             )
-            target = dest_root / rel
+            if flatten:
+                # Giữ folder project (phần tử đầu của rel), gom file thẳng vào đó
+                project_folder = rel.parts[0] if len(rel.parts) > 1 else ""
+                target = dest_root / project_folder / resolved.name
+            else:
+                target = dest_root / rel
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if target.exists():
@@ -345,12 +354,36 @@ class LibraryTab(QWidget):
                 logger.error("Copy lỗi {} → {}: {}", src, target, exc)
         return copied, existed, missing, failed
 
+    def _ask_copy_structure(self) -> bool | None:
+        """Hỏi kiểu sắp xếp thư mục khi tải. True = gom phẳng, False = giữ cấu trúc,
+        None = người dùng hủy."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Kiểu thư mục khi tải")
+        box.setText("Sắp xếp file khi copy ra ngoài thế nào?")
+        box.setInformativeText(
+            "• Giữ cấu trúc: project / loại / từ-khóa / file (giống thư viện)\n"
+            "• Gom phẳng: mỗi project một folder, mọi file nằm trực tiếp trong đó"
+        )
+        keep_btn = box.addButton("Giữ cấu trúc thư mục con", QMessageBox.ButtonRole.AcceptRole)
+        flat_btn = box.addButton("Gom phẳng theo project", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(keep_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is keep_btn:
+            return False
+        if clicked is flat_btn:
+            return True
+        return None
+
     @asyncSlot()
     async def download_project(self) -> None:
         """Copy ảnh/video ra thư mục người dùng chọn.
 
         Phạm vi theo dropdown Project: một project cụ thể, hoặc **toàn bộ thư viện**
-        khi đang để 'Tất cả project' (mỗi project thành một thư mục con).
+        khi đang để 'Tất cả project' (mỗi project thành một thư mục con). Trước khi
+        copy, hỏi kiểu thư mục: giữ cấu trúc con hay gom phẳng theo project.
         """
         project = self._selected_project()
         if project is None:
@@ -365,6 +398,10 @@ class LibraryTab(QWidget):
             return
         n_projects = len({a.project_id for a in assets})
 
+        flatten = self._ask_copy_structure()
+        if flatten is None:
+            return
+
         dest = QFileDialog.getExistingDirectory(
             self, f"Chọn thư mục lưu {len(assets)} file của {scope}"
         )
@@ -377,7 +414,7 @@ class LibraryTab(QWidget):
         self.window.toast(f"Đang copy {len(assets)} file của {scope}...")
         try:
             copied, existed, missing, failed = await asyncio.to_thread(
-                self._copy_media, assets, self.window.config.library_root, Path(dest)
+                self._copy_media, assets, self.window.config.library_root, Path(dest), flatten
             )
         except OSError as exc:
             logger.error("Tải {} lỗi: {}", scope, exc)

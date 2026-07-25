@@ -95,6 +95,55 @@ def test_copy_media_dem_file_thieu(tmp_path) -> None:
     assert (copied, missing, failed) == (1, 1, 0)
 
 
+def test_copy_media_flatten_moi_project_mot_folder_phang(tmp_path) -> None:
+    """Gom phẳng: mỗi project 1 folder, mọi file nằm trực tiếp, bỏ loại/từ-khóa."""
+    lib, assets = _make_library(tmp_path)  # duan/image/solar/a.jpg + duan/video/solar/b.mp4
+    dest = tmp_path / "xuat"
+
+    copied, _, missing, failed = LibraryTab._copy_media(assets, lib, dest, flatten=True)
+
+    assert (copied, missing, failed) == (2, 0, 0)
+    # File nằm thẳng trong folder project, không còn thư mục con image/video/solar
+    assert (dest / "duan" / "a.jpg").exists()
+    assert (dest / "duan" / "b.mp4").exists()
+    assert not (dest / "duan" / "image").exists()
+    assert not (dest / "duan" / "video").exists()
+
+
+def test_copy_media_flatten_nhieu_project_tach_folder(tmp_path) -> None:
+    """Gom phẳng khi tải toàn bộ thư viện: mỗi project vẫn tách riêng folder."""
+    lib = tmp_path / "library"
+    a = lib / "du-an-1" / "image" / "solar" / "a.jpg"
+    b = lib / "du-an-2" / "video" / "wind" / "b.mp4"
+    for p in (a, b):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(p.name.encode())
+    dest = tmp_path / "xuat"
+
+    LibraryTab._copy_media([_asset(a), _asset(b, "video")], lib, dest, flatten=True)
+
+    assert (dest / "du-an-1" / "a.jpg").exists()
+    assert (dest / "du-an-2" / "b.mp4").exists()
+
+
+def test_copy_media_flatten_trung_ten_khac_noi_dung_them_hau_to(tmp_path) -> None:
+    """Gom phẳng: 2 file trùng tên (khác từ khóa) → không ghi đè, thêm hậu tố _2."""
+    lib = tmp_path / "library"
+    a1 = lib / "duan" / "image" / "solar" / "photo.jpg"
+    a2 = lib / "duan" / "image" / "wind" / "photo.jpg"
+    a1.parent.mkdir(parents=True, exist_ok=True)
+    a2.parent.mkdir(parents=True, exist_ok=True)
+    a1.write_bytes(b"noi dung 1")
+    a2.write_bytes(b"noi dung 2 khac han")
+    dest = tmp_path / "xuat"
+
+    copied, _, _, failed = LibraryTab._copy_media([_asset(a1), _asset(a2)], lib, dest, flatten=True)
+
+    assert (copied, failed) == (2, 0)
+    assert (dest / "duan" / "photo.jpg").exists()
+    assert (dest / "duan" / "photo_2.jpg").exists()
+
+
 def test_copy_media_nhieu_project_moi_project_mot_thu_muc(tmp_path) -> None:
     """Tải toàn bộ thư viện: mỗi project nằm gọn trong thư mục con của nó."""
     lib = tmp_path / "library"
