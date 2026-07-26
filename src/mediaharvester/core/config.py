@@ -56,10 +56,16 @@ class DownloadConfig(BaseModel):
 
 
 class DedupConfig(BaseModel):
-    """Cấu hình khử trùng lặp (sha256 + pHash)."""
+    """Cấu hình khử trùng lặp (sha256 + pHash).
+
+    `allow_duplicates=True` (mặc định): CHO PHÉP tải trùng — không bỏ qua ảnh/video
+    trùng nội dung (chỉ bỏ qua khi tải lại đúng cùng một file vật lý). Tắt đi để
+    quay lại chế độ khử trùng lặp (bỏ qua sha256 trùng + pHash gần trùng).
+    """
 
     phash_threshold: int = 5
     auto_skip_duplicates: bool = False
+    allow_duplicates: bool = True
 
 
 class AntiBlockConfig(BaseModel):
@@ -148,6 +154,7 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
         "[dedup]",
         f"phash_threshold = {config.dedup.phash_threshold}",
         f"auto_skip_duplicates = {str(config.dedup.auto_skip_duplicates).lower()}",
+        f"allow_duplicates = {str(config.dedup.allow_duplicates).lower()}",
         "",
         "[anti_block]",
         f"honor_robots_txt = {str(config.anti_block.honor_robots_txt).lower()}",

@@ -23,6 +23,9 @@ unsplash = 50
 phash_threshold = 5
 # true: tự bỏ qua ảnh gần trùng; false: hỏi user trên GUI
 auto_skip_duplicates = false
+# true (mặc định): CHO PHÉP tải trùng — không bỏ qua ảnh/video trùng nội dung
+# (chỉ bỏ qua khi tải lại đúng cùng URL). false: bật khử trùng lặp sha256 + pHash.
+allow_duplicates = true
 
 [anti_block]
 # Tôn trọng robots.txt (chỉ áp dụng cho ddgs / generic_scraper)

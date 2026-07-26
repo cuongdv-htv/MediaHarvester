@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import httpx
 from loguru import logger
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from tenacity import (
     AsyncRetrying,
     retry_if_exception,
@@ -431,21 +432,32 @@ class DownloadManager:
         state.status = JobStatus.PROCESSING
         self._notify(state)
 
+        allow_dupes = self.config.dedup.allow_duplicates
         sha256 = await asyncio.to_thread(sha256_file, file_path)
+        db_sha256: str | None = sha256  # sha256 lưu vào DB (None nếu trùng mà vẫn giữ)
 
         with get_session(self.engine) as session:
             dup = find_sha256_duplicate(session, sha256)
         if dup is not None:
-            logger.info("Trùng sha256 với asset #{} — bỏ qua: {}", dup.id, file_path.name)
-            # Chỉ xóa nếu là file MỚI ở đường dẫn khác — tên file deterministic theo URL
-            # nên chạy lại cùng URL sẽ ghi đè lên chính file gốc, tuyệt đối không xóa nó.
-            if Path(dup.file_path).resolve() != file_path.resolve():
-                file_path.unlink(missing_ok=True)
-            state.status = JobStatus.SKIPPED_DUPLICATE
-            state.error = f"Trùng tuyệt đối với asset #{dup.id}"
-            self._update_db_job(state)
-            self._notify(state)
-            return
+            # Tên file deterministic theo URL → tải lại CÙNG URL ghi đè lên chính file
+            # gốc; đó là cùng một file vật lý, luôn bỏ qua (không tạo bản ghi trùng).
+            same_file = Path(dup.file_path).resolve() == file_path.resolve()
+            if same_file or not allow_dupes:
+                logger.info("Trùng sha256 với asset #{} — bỏ qua: {}", dup.id, file_path.name)
+                if not same_file:
+                    file_path.unlink(missing_ok=True)
+                state.status = JobStatus.SKIPPED_DUPLICATE
+                state.error = f"Trùng tuyệt đối với asset #{dup.id}"
+                self._update_db_job(state)
+                self._notify(state)
+                return
+            # Cho phép tải trùng: giữ file khác đường dẫn nhưng KHÔNG lưu lại sha256 vào
+            # DB (cột sha256 UNIQUE) — sha256 thật vẫn ghi vào sidecar .meta.json.
+            logger.info(
+                "Trùng sha256 với asset #{} nhưng cho phép tải trùng — giữ lại: {}",
+                dup.id, file_path.name,
+            )
+            db_sha256 = None
 
         if result.media_type == MediaType.IMAGE:
             phash = await asyncio.to_thread(phash_image, file_path)
@@ -453,7 +465,7 @@ class DownloadManager:
             phash = await asyncio.to_thread(phash_video, file_path)
 
         project_id = self._ensure_project(state.project)
-        if phash is not None:
+        if phash is not None and not allow_dupes:
             with get_session(self.engine) as session:
                 near = find_phash_duplicate(
                     session, project_id, phash, self.config.dedup.phash_threshold
@@ -494,12 +506,28 @@ class DownloadManager:
             height=result.height,
             duration_sec=result.duration_sec,
             filesize=file_path.stat().st_size,
-            sha256=sha256,
+            sha256=db_sha256,
             phash=phash,
         )
         with get_session(self.engine) as session:
             session.add(asset)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                # Chốt chặn cuối cho race đồng thời: 2 job trùng sha256 chạy song song,
+                # cả hai qua được find_sha256_duplicate trước khi bên nào commit.
+                session.rollback()
+                if not allow_dupes:
+                    logger.info("Trùng sha256 (phát hiện khi ghi DB) — bỏ qua: {}", file_path.name)
+                    file_path.unlink(missing_ok=True)
+                    state.status = JobStatus.SKIPPED_DUPLICATE
+                    state.error = "Trùng sha256 (phát hiện khi ghi DB)"
+                    self._update_db_job(state)
+                    self._notify(state)
+                    return
+                asset.sha256 = None  # cho phép trùng: giữ file, không lưu lại sha256
+                session.add(asset)
+                session.commit()
             session.refresh(asset)
 
         write_sidecar(

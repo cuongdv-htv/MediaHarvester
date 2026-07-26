@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -84,6 +85,16 @@ class SettingsTab(QWidget):
         if config.ytdlp.cookies_from_browser in _COOKIE_OPTIONS:
             self.cookies_combo.setCurrentText(config.ytdlp.cookies_from_browser)
         form.addRow("Cookies từ browser (yt-dlp):", self.cookies_combo)
+
+        self.allow_dupes_check = QCheckBox(
+            "Cho phép tải trùng (không bỏ qua ảnh/video trùng nội dung)"
+        )
+        self.allow_dupes_check.setChecked(config.dedup.allow_duplicates)
+        self.allow_dupes_check.setToolTip(
+            "Bật: tải hết, kể cả file trùng nội dung (chỉ bỏ qua khi tải lại đúng cùng URL).\n"
+            "Tắt: khử trùng lặp — bỏ qua sha256 trùng và ảnh gần trùng (pHash)."
+        )
+        form.addRow("Trùng lặp:", self.allow_dupes_check)
         root.addWidget(general_box)
 
         # ---------- Nút hành động ----------
@@ -136,6 +147,7 @@ class SettingsTab(QWidget):
         config.default_quality = self.quality_combo.currentText()
         cookies = self.cookies_combo.currentText()
         config.ytdlp.cookies_from_browser = None if cookies == "Không dùng" else cookies
+        config.dedup.allow_duplicates = self.allow_dupes_check.isChecked()
         try:
             save_api_keys(keys)
             save_config(config)

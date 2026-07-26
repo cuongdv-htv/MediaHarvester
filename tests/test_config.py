@@ -15,6 +15,7 @@ def test_defaults_when_no_file(tmp_path: Path) -> None:
     assert cfg.download.max_per_domain == 2
     assert cfg.default_quality == "1080p"
     assert cfg.dedup.phash_threshold == 5
+    assert cfg.dedup.allow_duplicates is True  # mặc định: cho phép tải trùng
     assert cfg.rate_limits["pexels"] == 200
 
 
@@ -37,6 +38,7 @@ pexels = 100
 [dedup]
 phash_threshold = 3
 auto_skip_duplicates = true
+allow_duplicates = false
 """,
         encoding="utf-8",
     )
@@ -48,6 +50,7 @@ auto_skip_duplicates = true
     assert cfg.rate_limits == {"pexels": 100}
     assert cfg.dedup.phash_threshold == 3
     assert cfg.dedup.auto_skip_duplicates is True
+    assert cfg.dedup.allow_duplicates is False
 
 
 def test_partial_toml_keeps_defaults(tmp_path: Path) -> None:
